@@ -1,1 +1,0 @@
-Extracted from: https://www.spacespheremaps.com/
