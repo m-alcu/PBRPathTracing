@@ -1,0 +1,24 @@
+scene:
+  name: "Bunny"
+
+  camera:
+    position: [0.0, 0.15, 0.40]
+    target:   [0.0, 0.10, 0.0]
+    fov: 45.0
+
+  materials:
+    - name: white
+      albedo:   [0.82, 0.82, 0.82]
+
+    - name: ground
+      albedo:   [0.45, 0.55, 0.45]
+
+  objects:
+    - type: obj
+      file: "resources/objs/bunny.obj"
+      material: white
+
+    - type: sphere   # ground plane
+      center: [0.0, -100.0, 0.0]
+      radius: 100.0
+      material: ground
