@@ -27,8 +27,8 @@ A physically-based CPU path tracer written in C++17, rendered progressively into
 
 The foundation of the renderer is Kajiya's rendering equation (1986):
 
-```
-Lo(x, ωo) = Le(x, ωo) + ∫_Ω fr(x, ωi, ωo) Li(x, ωi) (ωi · n) dωi
+```math
+L_o(\mathbf{x},\,\omega_o) = L_e(\mathbf{x},\,\omega_o) + \int_{\Omega} f_r(\mathbf{x},\,\omega_i,\,\omega_o)\,L_i(\mathbf{x},\,\omega_i)\,(\omega_i \cdot \mathbf{n})\,d\omega_i
 ```
 
 | Symbol | Meaning |
@@ -48,14 +48,14 @@ The integral has no closed form for general scenes, so we solve it with Monte Ca
 
 A Monte Carlo estimator for an integral `∫ f(x) dx` is:
 
-```
-E[f] ≈ (1/N) Σ f(xᵢ) / p(xᵢ)
+```math
+\hat{I} \approx \frac{1}{N} \sum_{i=1}^{N} \frac{f(x_i)}{p(x_i)}
 ```
 
-where `xᵢ` are samples drawn from probability density `p`. Applied to the rendering equation:
+where $x_i$ are samples drawn from probability density $p$. Applied to the rendering equation:
 
-```
-Lo ≈ Le + (1/N) Σ [ fr(ωᵢ) · Li(ωᵢ) · (ωᵢ · n) ] / p(ωᵢ)
+```math
+L_o \approx L_e + \frac{1}{N} \sum_{i=1}^{N} \frac{f_r(\omega_i)\,L_i(\omega_i)\,(\omega_i \cdot \mathbf{n})}{p(\omega_i)}
 ```
 
 Each sample traces one random path through the scene. After `N` samples the estimator converges to the true solution; variance decreases as `1/√N`.
@@ -66,14 +66,14 @@ Each sample traces one random path through the scene. After `N` samples the esti
 
 The Lambertian (perfectly diffuse) BRDF is:
 
-```
-fr(x, ωi, ωo) = albedo / π
+```math
+f_r(\mathbf{x},\,\omega_i,\,\omega_o) = \frac{\rho}{\pi}
 ```
 
-It is constant — scattering is equal in all directions — and `albedo ∈ [0, 1]³` is the fraction of light reflected per colour channel. The factor `1/π` normalises energy conservation:
+It is constant — scattering is equal in all directions — and $\rho \in [0,1]^3$ is the albedo (fraction of light reflected per colour channel). The factor $1/\pi$ normalises energy conservation:
 
-```
-∫_Ω fr · (ωi · n) dωi = ∫_Ω (albedo/π) · cos(θ) dωi = albedo
+```math
+\int_{\Omega} f_r\,(\omega_i \cdot \mathbf{n})\,d\omega_i = \int_{\Omega} \frac{\rho}{\pi}\cos\theta\,d\omega_i = \rho
 ```
 
 ---
@@ -82,35 +82,37 @@ It is constant — scattering is equal in all directions — and `albedo ∈ [0,
 
 Naïve uniform hemisphere sampling has high variance because the `cos(θ)` term in the integrand approaches zero near the horizon. **Cosine-weighted** sampling draws `ωi` proportional to `cos(θ)`, exactly matching that factor:
 
-```
-p(ωi) = cos(θ) / π
+```math
+p(\omega_i) = \frac{\cos\theta}{\pi}
 ```
 
 Substituting into the Monte Carlo estimator for a Lambertian surface:
 
-```
-fr · (ωi · n) / p(ωi)  =  (albedo/π) · cos(θ) / (cos(θ)/π)  =  albedo
+```math
+\frac{f_r\,(\omega_i \cdot \mathbf{n})}{p(\omega_i)} = \frac{(\rho/\pi)\cos\theta}{\cos\theta/\pi} = \rho
 ```
 
-The `cos(θ)` and `π` factors cancel exactly, so the **throughput update per bounce is simply**:
+The $\cos\theta$ and $\pi$ factors cancel exactly, so the **throughput update per bounce is simply**:
 
-```
-β ← β ⊗ albedo          (⊗ = component-wise multiply)
+```math
+\beta \leftarrow \beta \otimes \rho \qquad (\otimes = \text{component-wise multiply})
 ```
 
 This is what `tracePath()` does — no extra cosine evaluation needed.
 
 #### Sampling formula (Malley's method)
 
-Given two uniform random numbers `u1, u2 ∈ [0, 1)`:
+Given two uniform random numbers $u_1, u_2 \in [0,1)$:
 
+```math
+r = \sqrt{u_1}, \qquad \varphi = 2\pi u_2
 ```
-r   = √u1
-φ   = 2π u2
-x   = r cos(φ)
-y   = r sin(φ)
-z   = √(1 − u1)         ← z is the "up" axis, aligned with the normal
+
+```math
+x = r\cos\varphi, \quad y = r\sin\varphi, \quad z = \sqrt{1 - u_1}
 ```
+
+where $z$ is the "up" axis, aligned with the surface normal.
 
 This samples the unit disk uniformly and projects it up onto the hemisphere, producing the cosine-weighted distribution. Implemented in `sampleCosineHemisphere()`.
 
@@ -128,8 +130,8 @@ B  = n × T
 
 Then the world-space bounce direction is:
 
-```
-ωi = normalize(T·x + B·y + n·z)
+```math
+\omega_i = \mathrm{normalize}(T\,x + B\,y + \mathbf{n}\,z)
 ```
 
 Implemented in `makeONB()`.
@@ -140,27 +142,26 @@ Implemented in `makeONB()`.
 
 The path tracer unrolls the recursive rendering equation into a loop. It maintains a **throughput** vector `β` that accumulates the product of BRDFs and sampling weights along the path:
 
-```
-β₀ = (1, 1, 1)
-βₖ₊₁ = βₖ ⊗ albedo     (for Lambertian + cosine sampling, as shown above)
+```math
+\beta_0 = (1,1,1), \qquad \beta_{k+1} = \beta_k \otimes \rho
 ```
 
 At each bounce, the emitted radiance is accumulated:
 
-```
-L += β · Le
+```math
+L \mathrel{+}= \beta \cdot L_e
 ```
 
 When the path escapes the scene (no intersection), the sky radiance is added:
 
-```
-L += β · Lsky(ωi)
+```math
+L \mathrel{+}= \beta \cdot L_{\mathrm{sky}}(\omega_i)
 ```
 
 where the sky is a simple gradient:
 
-```
-Lsky(d) = (1 − t)·(1,1,1) + t·(0.5, 0.7, 1.0),    t = 0.5·(d.y + 1)
+```math
+L_{\mathrm{sky}}(\mathbf{d}) = (1-t)\,(1,1,1) + t\,(0.5,\,0.7,\,1.0), \qquad t = \tfrac{1}{2}(d_y + 1)
 ```
 
 ---
@@ -169,10 +170,16 @@ Lsky(d) = (1 − t)·(1,1,1) + t·(0.5, 0.7, 1.0),    t = 0.5·(d.y + 1)
 
 Paths that contribute little energy waste computation. **Russian roulette** terminates a path with probability `(1 − p)` and, if it survives, boosts the throughput to keep the estimator unbiased:
 
+```math
+p = \mathrm{clamp}\!\left(\max(\beta_r,\,\beta_g,\,\beta_b),\;0.05,\;0.95\right)
 ```
-p    = clamp(max(β.r, β.g, β.b), 0.05, 0.95)
-if rand() > p: break
-β   ← β / p
+
+```
+if rand() > p: terminate path
+```
+
+```math
+\beta \leftarrow \frac{\beta}{p}
 ```
 
 Applied from `depth ≥ 3`, this eliminates low-contribution paths while maintaining an unbiased estimate (the expected value of `β/p` equals `β`).
@@ -199,29 +206,29 @@ v  = f · (d · q)          ← barycentric v; reject if v < 0 or u+v > 1
 t  = f · (e2 · q)         ← ray parameter; reject if t < ε (behind or self-hit)
 ```
 
-The hit point is `p = o + t·d`. The shading normal is interpolated from per-vertex normals:
+The hit point is $\mathbf{p} = \mathbf{o} + t\,\mathbf{d}$. The shading normal is interpolated from per-vertex normals:
 
-```
-n = normalize(n0·(1−u−v) + n1·u + n2·v)
+```math
+\mathbf{n} = \mathrm{normalize}\!\left(\mathbf{n}_0(1-u-v) + \mathbf{n}_1\,u + \mathbf{n}_2\,v\right)
 ```
 
 ---
 
 ### 9. Ray–Sphere Intersection
 
-For sphere centre `c` and radius `r`, substitute `r(t)` into `|p − c|² = r²`:
+For sphere centre $\mathbf{c}$ and radius $r$, substitute $\mathbf{r}(t)$ into $|\mathbf{p} - \mathbf{c}|^2 = r^2$:
 
-```
-oc   = o − c
-b    = oc · d
-disc = b² − (|oc|² − r²)
-
-if disc < 0: miss
-t    = −b − √disc          ← near root
-if t < ε: t = −b + √disc  ← try far root
+```math
+\mathbf{oc} = \mathbf{o} - \mathbf{c}, \quad b = \mathbf{oc} \cdot \mathbf{d}, \quad \Delta = b^2 - \left(|\mathbf{oc}|^2 - r^2\right)
 ```
 
-Surface normal at hit: `n = normalize(p − c)`.
+If $\Delta < 0$: miss. Otherwise:
+
+```math
+t = -b - \sqrt{\Delta} \quad \text{(near root)}; \quad \text{if } t < \varepsilon,\; t = -b + \sqrt{\Delta}
+```
+
+Surface normal at hit: $\mathbf{n} = \mathrm{normalize}(\mathbf{p} - \mathbf{c})$.
 
 ---
 
@@ -255,9 +262,9 @@ Early exit uses the current best hit `t` as `tMax`, discarding nodes that cannot
 
 The accumulation buffer stores HDR linear radiance as `Vec3`. Each frame:
 
-1. **Average** `N` samples: `c = accum[i] / N`
-2. **Reinhard** per-channel: `c' = c / (1 + c)` — maps `[0, ∞) → [0, 1)`
-3. **Gamma-2** (sRGB approximation): `c'' = √c'`
+1. **Average** $N$ samples: $c = \text{accum}[i] / N$
+2. **Reinhard** per-channel: $c' = c\,/\,(1+c)$ — maps $[0,\infty) \to [0,1)$
+3. **Gamma-2** (sRGB approximation): $c'' = \sqrt{c'}$
 4. **Pack** to ARGB8888: `(0xFF << 24) | (r << 16) | (g << 8) | b`
 5. **Upload** via `SDL_UpdateTexture` and present with `SDL_RenderTexture`
 
