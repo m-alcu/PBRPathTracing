@@ -8,6 +8,7 @@ A physically-based CPU path tracer written in C++17, rendered progressively into
 
 - **Unbiased Monte Carlo path tracing** with cosine-weighted importance sampling
 - **Lambertian (diffuse) BRDF** with correct throughput accounting
+- **Metallic (specular) BRDF** with configurable roughness fuzz; probabilistic lobe mixing
 - **Russian roulette** path termination
 - **Binary BVH** (bounding volume hierarchy) over triangle meshes for fast ray–mesh intersection
 - **Analytical sphere** intersection in the same scene
@@ -15,7 +16,7 @@ A physically-based CPU path tracer written in C++17, rendered progressively into
 - **Progressive accumulation**: each frame adds one sample per pixel; the image refines indefinitely
 - **Multi-threaded rendering**: one `std::thread` per CPU core, row-striped (no contention)
 - **SDL3 streaming texture**: the float accumulation buffer is tone-mapped and uploaded to the GPU every frame via `SDL_UpdateTexture`
-- **YAML scene files**: define camera, materials (albedo + emission), OBJ meshes and spheres
+- **YAML scene files**: define camera, materials (`albedo`, `emission`, `metallic`, `roughness`), OBJ meshes and spheres
 - **Interactive orbit camera**: left-drag to orbit, scroll to zoom — resets accumulation on change
 - **Dear ImGui panel**: live SPP counter, FPS, thread count, scene switcher
 
@@ -78,7 +79,61 @@ It is constant — scattering is equal in all directions — and $\rho \in [0,1]
 
 ---
 
-### 4. Cosine-Weighted Hemisphere Sampling
+### 4. Metallic (Specular) BRDF
+
+For metallic conductors, light does not penetrate the material — it reflects off the surface, tinted by the metal's characteristic color. Two parameters control the behaviour:
+
+| Parameter | Range | Meaning |
+|-----------|-------|---------|
+| `metallic` | [0, 1] | Probability of choosing the specular lobe over the diffuse lobe at each bounce |
+| `roughness` | [0, 1] | Amount of micro-surface perturbation applied to the ideal reflected direction |
+
+#### Perfect mirror reflection
+
+A perfect specular reflector maps an incoming direction $\omega_o$ to a unique outgoing direction by reflecting about the surface normal $\mathbf{n}$:
+
+```math
+\omega_r = \omega_o - 2\,(\omega_o \cdot \mathbf{n})\,\mathbf{n}
+```
+
+The BRDF of a perfect mirror is a delta distribution:
+
+```math
+f_r^{\text{spec}}(\omega_i,\omega_o) = \frac{\rho \;\delta(\omega_i - \omega_r)}{\cos\theta_i}
+```
+
+When evaluated inside the path tracer the delta collapses with the sampling PDF, leaving the same throughput update as the Lambertian case:
+
+```math
+\beta \;\leftarrow\; \beta \otimes \rho
+```
+
+#### Roughness fuzz
+
+Real metals are not perfect mirrors; microscopic surface irregularities spread the reflected cone. A uniform random point $\mathbf{s}$ is sampled inside the unit ball and added to the ideal reflected direction, scaled by `roughness`:
+
+```math
+\omega_i = \mathrm{normalize}\!\left(\omega_r + \texttt{roughness}\cdot\mathbf{s}\right), \qquad \mathbf{s} \sim \mathrm{Uniform}(\mathbb{B}^3)
+```
+
+`roughness = 0` recovers the perfect mirror; `roughness = 1` produces a heavily blurred reflection. If the perturbation pushes $\omega_i$ below the surface ($\omega_i \cdot \mathbf{n} \le 0$), the ray is absorbed (the path terminates).
+
+The unit ball sample is obtained by rejection — draw $\mathbf{p} \sim \mathrm{Uniform}([-1,1]^3)$ and retry until $|\mathbf{p}|^2 < 1$.
+
+#### Probabilistic lobe mixing
+
+At each bounce the path tracer selects a lobe stochastically:
+
+```
+with probability  metallic  → specular bounce,  β ⊗= albedo
+with probability  1−metallic → diffuse bounce,  β ⊗= albedo
+```
+
+Both branches produce the **same throughput factor** (`albedo`), so the selection probability cancels algebraically and no explicit $1/p$ correction is needed — the estimator is unbiased for any value of `metallic`.
+
+---
+
+### 5. Cosine-Weighted Hemisphere Sampling
 
 Naïve uniform hemisphere sampling has high variance because the `cos(θ)` term in the integrand approaches zero near the horizon. **Cosine-weighted** sampling draws `ωi` proportional to `cos(θ)`, exactly matching that factor:
 
@@ -118,7 +173,7 @@ This samples the unit disk uniformly and projects it up onto the hemisphere, pro
 
 ---
 
-### 5. Orthonormal Basis (ONB) Construction
+### 6. Orthonormal Basis (ONB) Construction
 
 The sampled direction `(x, y, z)` is in a local frame where `z = n̂`. To transform it to world space we build a tangent frame `(T, B, N)` using:
 
@@ -138,7 +193,7 @@ Implemented in `makeONB()`.
 
 ---
 
-### 6. Path Throughput and Recursive Estimator
+### 7. Path Throughput and Recursive Estimator
 
 The path tracer unrolls the recursive rendering equation into a loop. It maintains a **throughput** vector `β` that accumulates the product of BRDFs and sampling weights along the path:
 
@@ -166,7 +221,7 @@ L_{\mathrm{sky}}(\mathbf{d}) = (1-t)\,(1,1,1) + t\,(0.5,\,0.7,\,1.0), \qquad t =
 
 ---
 
-### 7. Russian Roulette Path Termination
+### 8. Russian Roulette Path Termination
 
 Paths that contribute little energy waste computation. **Russian roulette** terminates a path with probability `(1 − p)` and, if it survives, boosts the throughput to keep the estimator unbiased:
 
@@ -186,7 +241,7 @@ Applied from `depth ≥ 3`, this eliminates low-contribution paths while maintai
 
 ---
 
-### 8. Ray–Triangle Intersection (Möller–Trumbore)
+### 9. Ray–Triangle Intersection (Möller–Trumbore)
 
 Given ray `r(t) = o + t·d` and triangle vertices `v0, v1, v2`:
 
@@ -214,7 +269,7 @@ The hit point is $\mathbf{p} = \mathbf{o} + t\,\mathbf{d}$. The shading normal i
 
 ---
 
-### 9. Ray–Sphere Intersection
+### 10. Ray–Sphere Intersection
 
 For sphere centre $\mathbf{c}$ and radius $r$, substitute $\mathbf{r}(t)$ into $|\mathbf{p} - \mathbf{c}|^2 = r^2$:
 
@@ -232,7 +287,7 @@ Surface normal at hit: $\mathbf{n} = \mathrm{normalize}(\mathbf{p} - \mathbf{c})
 
 ---
 
-### 10. Binary BVH
+### 11. Binary BVH
 
 Triangle meshes are accelerated with a top-down **binary BVH** built by recursive spatial median splitting:
 
@@ -258,7 +313,7 @@ Early exit uses the current best hit `t` as `tMax`, discarding nodes that cannot
 
 ---
 
-### 11. Tone Mapping and Display
+### 12. Tone Mapping and Display
 
 The accumulation buffer stores HDR linear radiance as `Vec3`. Each frame:
 
@@ -278,10 +333,10 @@ src/
   constants.hpp             SCREEN_WIDTH, SCREEN_HEIGHT, SCENES_PATH
   pt/
     math.hpp                Vec3 (all ops + operator[]), Ray
-    material.hpp            Material {albedo, emission},  Hit {t, p, n, matId}
+    material.hpp            Material {albedo, emission, metallic, roughness},  Hit {t, p, n, matId}
     rng.hpp                 PCG32 random number generator
     scene.hpp               Camera · Triangle · Sphere · AABB · BVHNode · PBRScene
-    tracer.hpp              sky() · sampleCosineHemisphere() · makeONB() · tracePath()
+    tracer.hpp              sky() · sampleCosineHemisphere() · reflect() · randomInUnitSphere() · makeONB() · tracePath()
     scene_loader.hpp/.cpp   PBRSceneLoader::loadFromFile() — yaml-cpp + tinyobjloader
   vendor/
     imgui/                  Dear ImGui + SDL3 backends
@@ -296,6 +351,7 @@ resources/
     cornell.yaml            Cornell box approximated with spheres
     suzanne.yaml            Blender's Suzanne mesh
     bunny.yaml              Stanford bunny
+    metals.yaml             5 spheres showcasing matte / gold / mirror / copper / brushed steel
   objs/                     OBJ mesh files
 
 tests/
@@ -317,8 +373,15 @@ scene:
 
   materials:
     - name: red_diffuse
-      albedo:   [0.8, 0.1, 0.1]  # diffuse reflectance [0..1] per channel
-      emission: [0.0, 0.0, 0.0]  # emitted radiance (set > 0 for area lights)
+      albedo:    [0.8, 0.1, 0.1]  # diffuse reflectance / metal tint [0..1] per channel
+      emission:  [0.0, 0.0, 0.0]  # emitted radiance (set > 0 for area lights)
+      metallic:  0.0              # 0 = pure diffuse, 1 = pure specular (default: 0)
+      roughness: 0.0              # 0 = perfect mirror, 1 = fully rough metal (default: 0)
+
+    - name: gold
+      albedo:    [1.0, 0.78, 0.07]
+      metallic:  1.0
+      roughness: 0.05
 
     - name: warm_light
       albedo:   [0.0, 0.0, 0.0]
