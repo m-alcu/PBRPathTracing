@@ -2,6 +2,10 @@
 
 A physically-based CPU path tracer written in C++17, rendered progressively into an SDL3 streaming texture with a Dear ImGui overlay.
 
+Ray Tracing (broad technique)\
+└── Path Tracing (specific Monte Carlo algorithm)\
+└── PBR Path Tracing (path tracing + physically valid BRDFs)
+
 ---
 
 ## Features
@@ -31,6 +35,12 @@ The foundation of the renderer is Kajiya's rendering equation (1986):
 ```math
 L_o(\mathbf{x},\,\omega_o) = L_e(\mathbf{x},\,\omega_o) + \int_{\Omega} f_r(\mathbf{x},\,\omega_i,\,\omega_o)\,L_i(\mathbf{x},\,\omega_i)\,(\omega_i \cdot \mathbf{n})\,d\omega_i
 ```
+<p align="center">
+  <img src="resources/Rendering_eq.png" width="300">
+</p>
+
+The equation describes the amount of light leaving a point x along a particular viewing direction, given functions for incoming light and emitted light, and a BRDF.
+ref: https://en.wikipedia.org/wiki/Rendering_equation
 
 | Symbol | Meaning |
 |--------|---------|
