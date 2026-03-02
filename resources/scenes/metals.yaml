@@ -1,0 +1,80 @@
+scene:
+  name: "Metals"
+
+  camera:
+    position: [0.0, 1.8, 6.0]
+    target:   [0.0, 0.2, 0.0]
+    fov: 45.0
+
+  materials:
+    # --- Diffuse reference ---
+    - name: matte_white
+      albedo: [0.9, 0.9, 0.9]
+
+    # --- Metals (metallic=1, varying roughness and tint) ---
+    - name: gold
+      albedo:    [1.00, 0.78, 0.07]
+      metallic:  1.0
+      roughness: 0.05
+
+    - name: mirror
+      albedo:    [0.95, 0.95, 0.95]
+      metallic:  1.0
+      roughness: 0.0
+
+    - name: copper
+      albedo:    [0.95, 0.64, 0.54]
+      metallic:  1.0
+      roughness: 0.2
+
+    - name: brushed_steel
+      albedo:    [0.80, 0.80, 0.80]
+      metallic:  1.0
+      roughness: 0.45
+
+    # --- Ground and light ---
+    - name: ground
+      albedo: [0.55, 0.55, 0.55]
+
+    - name: light
+      albedo:    [0.0, 0.0, 0.0]
+      emission:  [14.0, 13.0, 11.0]   # warm overhead light
+
+  objects:
+    # Five spheres in a row: matte | gold | mirror | copper | brushed_steel
+    - type: sphere
+      center: [-2.4, 0.0, 0.0]
+      radius: 0.7
+      material: matte_white
+
+    - type: sphere
+      center: [-1.2, 0.0, 0.0]
+      radius: 0.7
+      material: gold
+
+    - type: sphere
+      center: [ 0.0, 0.0, 0.0]
+      radius: 0.7
+      material: mirror
+
+    - type: sphere
+      center: [ 1.2, 0.0, 0.0]
+      radius: 0.7
+      material: copper
+
+    - type: sphere
+      center: [ 2.4, 0.0, 0.0]
+      radius: 0.7
+      material: brushed_steel
+
+    # Ground plane (large sphere trick)
+    - type: sphere
+      center: [ 0.0, -100.7, 0.0]
+      radius: 100.0
+      material: ground
+
+    # Area light overhead
+    - type: sphere
+      center: [ 0.0, 9.0, 0.0]
+      radius: 2.5
+      material: light

@@ -31,6 +31,21 @@ inline Vec3 sampleCosineHemisphere(float u1, float u2) {
     return {x, y, z};   // z aligned with surface normal
 }
 
+// Reflect v about normal n (both in world space, v pointing toward surface)
+inline Vec3 reflect(const Vec3& v, const Vec3& n) {
+    return v - 2.0f * dot(v, n) * n;
+}
+
+// Uniform random point inside the unit sphere (rejection sampling)
+inline Vec3 randomInUnitSphere(RNG& rng) {
+    while (true) {
+        Vec3 p{rng.nextFloat() * 2.0f - 1.0f,
+               rng.nextFloat() * 2.0f - 1.0f,
+               rng.nextFloat() * 2.0f - 1.0f};
+        if (dot(p, p) < 1.0f) return p;
+    }
+}
+
 // Build an orthonormal basis (T, B, N) from a surface normal N
 // so that local vectors can be rotated to world space.
 inline void makeONB(const Vec3& n, Vec3& t, Vec3& b) {
@@ -66,18 +81,24 @@ inline Vec3 tracePath(Ray ray, RNG& rng,
         // Emission (area lights)
         L += beta * m.emission;
 
-        // --- Lambertian diffuse bounce ---
+        // --- Scatter: metallic specular or Lambertian diffuse ---
+        Vec3 wi;
+        if (rng.nextFloat() < m.metallic) {
+            // Specular (metallic) bounce: reflect + roughness fuzz
+            Vec3 reflected = reflect(ray.d, h.n);
+            wi = normalize(reflected + m.roughness * randomInUnitSphere(rng));
+            // Fuzz can push wi below the surface → the ray is absorbed
+            if (dot(wi, h.n) <= 0.0f) break;
+        } else {
+            // Lambertian diffuse bounce (cosine-weighted hemisphere)
+            Vec3 t, b;
+            makeONB(h.n, t, b);
+            Vec3 local = sampleCosineHemisphere(rng.nextFloat(), rng.nextFloat());
+            wi = normalize(t * local.x + b * local.y + h.n * local.z);
+        }
 
-        // Build orthonormal basis aligned with hit normal
-        Vec3 t, b;
-        makeONB(h.n, t, b);
-
-        // Cosine-weighted sample in hemisphere
-        Vec3 local = sampleCosineHemisphere(rng.nextFloat(), rng.nextFloat());
-        Vec3 wi    = normalize(t * local.x + b * local.y + h.n * local.z);
-
-        // Throughput update:
-        // BRDF = albedo / π, PDF = cos(θ) / π → beta *= albedo (they cancel)
+        // Throughput: albedo tints both lobes; selection probs cancel because
+        // both branches produce the same weight coefficient.
         beta *= m.albedo;
 
         // Russian roulette from depth 3 onwards
