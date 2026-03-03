@@ -1,6 +1,7 @@
 #include "scene_loader.hpp"
 #include <yaml-cpp/yaml.h>
 #include "vendor/tinyobjloader/tiny_obj_loader.h"
+#include "../texture.hpp"
 #include <filesystem>
 #include <stdexcept>
 #include <unordered_map>
@@ -25,12 +26,23 @@ static Material parseMaterial(const YAML::Node& node) {
     return m;
 }
 
-// Load an OBJ file via tinyobjloader, append triangles with the given matId.
-// normals are generated per-face if absent.
-static void loadObj(const std::string& filename, int matId,
-                    std::vector<Triangle>& tris) {
+// Load an OBJ file via tinyobjloader, append triangles.
+// When useMtl=true, materials from the accompanying .mtl are appended to
+// outMaterials (and diffuse textures into outTextures via texCache).
+// When useMtl=false, all triangles use fallbackMatId.
+// Normals are generated per-face if absent from the OBJ.
+static void loadObj(const std::string& filename, int fallbackMatId,
+                    std::vector<Triangle>& tris,
+                    std::vector<Material>* outMaterials = nullptr,
+                    std::vector<Texture>*  outTextures  = nullptr,
+                    std::unordered_map<std::string, int>* texCache = nullptr,
+                    bool useMtl = false) {
+    namespace fs = std::filesystem;
+
     tinyobj::ObjReaderConfig cfg;
     cfg.triangulate = true;
+    if (useMtl)
+        cfg.mtl_search_path = fs::path(filename).parent_path().string();
 
     tinyobj::ObjReader reader;
     if (!reader.ParseFromFile(filename, cfg)) {
@@ -45,14 +57,57 @@ static void loadObj(const std::string& filename, int matId,
     const auto& attrib = reader.GetAttrib();
     const auto& shapes = reader.GetShapes();
 
+    // Build a mapping: OBJ material index → scene material index
+    std::vector<int> matIdMap;
+    if (useMtl && outMaterials) {
+        const auto& mtlMats = reader.GetMaterials();
+        std::string baseDir = fs::path(filename).parent_path().string();
+        int base = (int)outMaterials->size();
+        matIdMap.resize(mtlMats.size());
+        for (int i = 0; i < (int)mtlMats.size(); i++) {
+            const auto& m = mtlMats[i];
+            Material mat;
+            mat.albedo   = {m.diffuse[0],  m.diffuse[1],  m.diffuse[2]};
+            mat.emission = {m.emission[0], m.emission[1], m.emission[2]};
+
+            // Load diffuse texture if present
+            if (!m.diffuse_texname.empty() && outTextures && texCache) {
+                std::string texPath = (fs::path(baseDir) / m.diffuse_texname).string();
+                auto it = texCache->find(texPath);
+                if (it != texCache->end()) {
+                    mat.albedoTex = it->second;
+                } else {
+                    Texture tex = Texture::loadFromFile(texPath);
+                    if (tex.isValid()) {
+                        int texIdx = (int)outTextures->size();
+                        outTextures->push_back(std::move(tex));
+                        (*texCache)[texPath] = texIdx;
+                        mat.albedoTex = texIdx;
+                    }
+                }
+            }
+
+            outMaterials->push_back(mat);
+            matIdMap[i] = base + i;
+        }
+    }
+
     for (const auto& shape : shapes) {
         size_t idxOff = 0;
         for (size_t f = 0; f < shape.mesh.num_face_vertices.size(); ++f) {
             int fv = (int)shape.mesh.num_face_vertices[f];
             if (fv != 3) { idxOff += fv; continue; }  // skip non-triangles
 
+            // Resolve per-face material
+            int triMatId = fallbackMatId;
+            if (useMtl && !matIdMap.empty() && f < shape.mesh.material_ids.size()) {
+                int mid = shape.mesh.material_ids[f];
+                if (mid >= 0 && mid < (int)matIdMap.size())
+                    triMatId = matIdMap[mid];
+            }
+
             Triangle tri;
-            tri.matId = matId;
+            tri.matId = triMatId;
             bool hasNormals = true;
 
             for (int v = 0; v < 3; v++) {
@@ -70,6 +125,11 @@ static void loadObj(const std::string& filename, int matId,
                     };
                 } else {
                     hasNormals = false;
+                }
+                if (idx.texcoord_index >= 0) {
+                    tri.uv[v][0] = attrib.texcoords[2 * idx.texcoord_index + 0];
+                    // OBJ V=0 is bottom; stb_image V=0 is top → flip
+                    tri.uv[v][1] = 1.0f - attrib.texcoords[2 * idx.texcoord_index + 1];
                 }
             }
 
@@ -104,6 +164,7 @@ std::unique_ptr<PBRScene> loadFromFile(const std::string& yamlPath) {
 
     YAML::Node sn = root["scene"];
     auto scene = std::make_unique<PBRScene>();
+    std::unordered_map<std::string, int> texCache;  // filename → scene texture index
 
     if (sn["name"]) scene->name = sn["name"].as<std::string>();
 
@@ -144,7 +205,9 @@ std::unique_ptr<PBRScene> loadFromFile(const std::string& yamlPath) {
 
             if (type == "obj") {
                 std::string file = on["file"].as<std::string>();
-                loadObj(file, matId, scene->triangles);
+                bool useMtl = on["use_obj_materials"] && on["use_obj_materials"].as<bool>();
+                loadObj(file, matId, scene->triangles, &scene->materials,
+                        &scene->textures, &texCache, useMtl);
 
             } else if (type == "sphere") {
                 Sphere sph;
@@ -163,11 +226,12 @@ std::unique_ptr<PBRScene> loadFromFile(const std::string& yamlPath) {
     // Build BVH over triangle soup
     scene->buildBVH();
 
-    std::fprintf(stdout, "[scene_loader] Loaded '%s': %zu triangles, %zu spheres, %zu materials\n",
+    std::fprintf(stdout, "[scene_loader] Loaded '%s': %zu triangles, %zu spheres, %zu materials, %zu textures\n",
                  scene->name.c_str(),
                  scene->triangles.size(),
                  scene->spheres.size(),
-                 scene->materials.size());
+                 scene->materials.size(),
+                 scene->textures.size());
 
     return scene;
 }

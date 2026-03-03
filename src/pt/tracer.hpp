@@ -99,9 +99,14 @@ inline Vec3 tracePath(Ray ray, RNG& rng,
             wi = normalize(t * local.x + b * local.y + h.n * local.z);
         }
 
-        // Throughput: albedo tints both lobes; selection probs cancel because
-        // both branches produce the same weight coefficient.
-        beta *= m.albedo;
+        // Throughput: use texture albedo if available, else material albedo
+        Vec3 albedo = m.albedo;
+        if (m.albedoTex >= 0 && m.albedoTex < (int)scene.textures.size()) {
+            float r, g, b;
+            scene.textures[m.albedoTex].sample(h.tu, h.tv, r, g, b);
+            albedo = Vec3{r, g, b} * (1.0f / 255.0f);
+        }
+        beta *= albedo;
 
         // Russian roulette from depth 3 onwards
         if (depth >= 3) {

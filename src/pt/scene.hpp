@@ -1,6 +1,7 @@
 #pragma once
 #include "math.hpp"
 #include "material.hpp"
+#include "../texture.hpp"
 #include <algorithm>
 #include <cmath>
 #include <numeric>
@@ -60,9 +61,10 @@ struct Camera {
 // ---------------------------------------------------------------------------
 
 struct Triangle {
-    Vec3 v[3];
-    Vec3 n[3];   // per-vertex normals (interpolated on hit)
-    int  matId = 0;
+    Vec3  v[3];
+    Vec3  n[3];           // per-vertex normals (interpolated on hit)
+    float uv[3][2] = {};  // per-vertex texture coordinates (u, v in [0,1])
+    int   matId = 0;
 };
 
 // Möller–Trumbore triangle intersection
@@ -146,6 +148,7 @@ struct PBRScene {
     std::vector<Triangle> triangles;
     std::vector<Sphere>   spheres;
     std::vector<Material> materials;
+    std::vector<Texture>  textures;   // diffuse textures referenced by materials
     Camera camera;
 
     // BVH (built after geometry is loaded)
@@ -211,6 +214,8 @@ private:
             best.p     = ray.o + ray.d * t;
             float w    = 1.0f - u - v;
             best.n     = normalize(tri.n[0] * w + tri.n[1] * u + tri.n[2] * v);
+            best.tu    = tri.uv[0][0] * w + tri.uv[1][0] * u + tri.uv[2][0] * v;
+            best.tv    = tri.uv[0][1] * w + tri.uv[1][1] * u + tri.uv[2][1] * v;
         }
     }
 
@@ -229,6 +234,8 @@ private:
                     best.p     = ray.o + ray.d * t;
                     float w    = 1.0f - u - v;
                     best.n     = normalize(tri.n[0] * w + tri.n[1] * u + tri.n[2] * v);
+                    best.tu    = tri.uv[0][0] * w + tri.uv[1][0] * u + tri.uv[2][0] * v;
+                    best.tv    = tri.uv[0][1] * w + tri.uv[1][1] * u + tri.uv[2][1] * v;
                 }
             }
         } else {
