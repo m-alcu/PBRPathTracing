@@ -165,7 +165,8 @@ int main(int, char**) {
     // ------------------------------------------------------------------
     // Main loop
     // ------------------------------------------------------------------
-    bool running   = true;
+    bool running    = true;
+    bool useHashRng = true;  // false → PCG32
 
     while (running) {
         // ---- Events --------------------------------------------------
@@ -212,17 +213,23 @@ int main(int, char**) {
                     for (int py = rowStart; py < rowEnd; py++) {
                         for (int px = 0; px < W; px++) {
                             // Unique seed per pixel × sample
-                            uint64_t seed =
-                                (uint64_t)(py * W + px) * 1099511628211ull
-                                ^ (uint64_t)sampleCount * 6364136223846793005ull;
-                            RNG rng(seed);
-
-                            Ray ray = scene->camera.generateRay(
-                                px, py, W, H,
-                                rng.nextFloat(), rng.nextFloat());
-
-                            Vec3 L = tracePath(ray, rng, scene->materials, *scene);
-                            accum[py * W + px] += L;
+                            if (useHashRng) {
+                                uint32_t seed =
+                                    ((uint32_t)py * (uint32_t)W + (uint32_t)px)
+                                    ^ ((uint32_t)sampleCount * 2246822519u);
+                                HashRNG rng(seed);
+                                Ray ray = scene->camera.generateRay(
+                                    px, py, W, H, rng.nextFloat(), rng.nextFloat());
+                                accum[py * W + px] += tracePath(ray, rng, scene->materials, *scene);
+                            } else {
+                                uint64_t seed =
+                                (uint64_t)((py * W + px) * 1099511628211ull
+                                ^ (uint64_t)sampleCount * 6364136223846793005ull);                                     
+                                RNG rng(seed);
+                                Ray ray = scene->camera.generateRay(
+                                    px, py, W, H, rng.nextFloat(), rng.nextFloat());
+                                accum[py * W + px] += tracePath(ray, rng, scene->materials, *scene);
+                            }
                         }
                     }
                 });
@@ -272,6 +279,15 @@ int main(int, char**) {
             }
             ImGui::SameLine();
             if (ImGui::Button("Reset")) resetAccum();
+        }
+
+        ImGui::Separator();
+        {
+            int rngChoice = useHashRng ? 1 : 0;
+            ImGui::Text("RNG:"); ImGui::SameLine();
+            bool changed  = ImGui::RadioButton("PCG32", &rngChoice, 0); ImGui::SameLine();
+            changed      |= ImGui::RadioButton("Hash",  &rngChoice, 1);
+            if (changed) { useHashRng = (rngChoice == 1); resetAccum(); }
         }
 
         ImGui::Separator();

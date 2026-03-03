@@ -1,0 +1,43 @@
+scene:
+  name: "Cornell Box (official)"
+
+  # Camera from the official Cornell data:
+  #   position (278, 273, -800) mm, direction (0, 0, 1)
+  #   focal length 35mm, sensor 25x25mm → FOV ≈ 39.3°
+  camera:
+    position: [278.0, 273.0, -800.0]
+    target:   [278.0, 273.0,    0.0]
+    fov: 39.3
+
+  # Albedo values approximated from the official spectral measurements
+  # (Lambertian reflectances averaged to sRGB primaries)
+  materials:
+    - name: white
+      albedo: [0.73, 0.73, 0.73]
+
+    - name: red
+      albedo: [0.65, 0.05, 0.05]
+
+    - name: green
+      albedo: [0.12, 0.45, 0.15]
+
+    - name: light
+      albedo:   [0.0, 0.0, 0.0]
+      emission: [15.0, 15.0, 15.0]
+
+  objects:
+    - type: obj
+      file: "resources/objs/cornell_official_white.obj"
+      material: white
+
+    - type: obj
+      file: "resources/objs/cornell_official_red.obj"
+      material: red
+
+    - type: obj
+      file: "resources/objs/cornell_official_green.obj"
+      material: green
+
+    - type: obj
+      file: "resources/objs/cornell_official_light.obj"
+      material: light

@@ -37,6 +37,7 @@ inline Vec3 reflect(const Vec3& v, const Vec3& n) {
 }
 
 // Uniform random point inside the unit sphere (rejection sampling)
+template<typename RNG>
 inline Vec3 randomInUnitSphere(RNG& rng) {
     while (true) {
         Vec3 p{rng.nextFloat() * 2.0f - 1.0f,
@@ -59,6 +60,7 @@ inline void makeONB(const Vec3& n, Vec3& t, Vec3& b) {
 // Path tracer
 // ---------------------------------------------------------------------------
 
+template<typename RNG>
 inline Vec3 tracePath(Ray ray, RNG& rng,
                       const std::vector<Material>& mats,
                       const PBRScene& scene)

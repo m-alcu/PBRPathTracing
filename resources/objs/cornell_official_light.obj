@@ -1,0 +1,8 @@
+# Cornell Box - area light (embedded in ceiling at y=548, slightly below y=548.8)
+# Source: https://www.graphics.cornell.edu/online/box/data.html
+# Dimensions: 130mm x 105mm. Normal points downward (-y direction).
+v 343.0 548.0 227.0
+v 343.0 548.0 332.0
+v 213.0 548.0 332.0
+v 213.0 548.0 227.0
+f 1 2 3 4

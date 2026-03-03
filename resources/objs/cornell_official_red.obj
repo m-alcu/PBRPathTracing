@@ -1,0 +1,8 @@
+# Cornell Box - red wall (left, at x≈556)
+# Source: https://www.graphics.cornell.edu/online/box/data.html
+# Normal points inward (-x direction)
+v 552.8   0.0   0.0
+v 549.6   0.0 559.2
+v 556.0 548.8 559.2
+v 556.0 548.8   0.0
+f 1 2 3 4
