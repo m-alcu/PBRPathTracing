@@ -1,204 +1,16 @@
 #pragma once
-#include "math.hpp"
+#include "camera.hpp"
+#include "triangle.hpp"
+#include "sphere.hpp"
+#include "torus.hpp"
+#include "bvh.hpp"
+#include "hit.hpp"
 #include "material.hpp"
-#include "constants.hpp"
 #include "../texture.hpp"
 #include <algorithm>
-#include <cmath>
 #include <numeric>
 #include <vector>
 #include <string>
-
-// ---------------------------------------------------------------------------
-// Camera
-// ---------------------------------------------------------------------------
-
-struct Camera {
-    Vec3  orbitTarget{0.0f, 0.0f, 0.0f};
-    float orbitRadius    = 4.0f;
-    float orbitAzimuth   = 0.0f;
-    float orbitElevation = 0.2f;
-    float fov = 45.0f;   // vertical FOV in degrees
-
-    // Derived state – updated by applyOrbit() / setLookAt()
-    Vec3 pos{0.0f, 0.8f, 4.0f};
-    Vec3 forward{0.0f, 0.0f, -1.0f};
-
-    void applyOrbit() {
-        float ca = std::cos(orbitAzimuth),  sa = std::sin(orbitAzimuth);
-        float ce = std::cos(orbitElevation), se = std::sin(orbitElevation);
-        pos     = orbitTarget + Vec3{sa * ce, se, ca * ce} * orbitRadius;
-        forward = normalize(orbitTarget - pos);
-    }
-
-    void setLookAt(Vec3 eye, Vec3 target) {
-        orbitTarget = target;
-        Vec3 d = eye - target;
-        orbitRadius    = length(d);
-        orbitAzimuth   = std::atan2(d.x, d.z);
-        float safe = std::clamp(d.y / orbitRadius, -0.999f, 0.999f);
-        orbitElevation = std::asin(safe);
-        pos     = eye;
-        forward = normalize(target - eye);
-    }
-
-    Ray generateRay(int px, int py, int w, int h, float du, float dv) const {
-        Vec3 right = normalize(cross(forward, Vec3{0.0f, 1.0f, 0.0f}));
-        if (length(right) < 0.001f) right = {1.0f, 0.0f, 0.0f};
-        Vec3 up = cross(right, forward);
-
-        float aspect = (float)w / (float)h;
-        float scale  = std::tan(fov * 0.5f * RAD);
-        float ndcX   = (2.0f * ((float)px + du) / (float)w - 1.0f) * aspect * scale;
-        float ndcY   = (1.0f - 2.0f * ((float)py + dv) / (float)h) * scale;
-
-        Vec3 dir = normalize(forward + right * ndcX + up * ndcY);
-        return {pos, dir};
-    }
-};
-
-// ---------------------------------------------------------------------------
-// Triangle geometry
-// ---------------------------------------------------------------------------
-
-struct Triangle {
-    Vec3  v[3];
-    Vec3  n[3];           // per-vertex normals (interpolated on hit)
-    float uv[3][2] = {};  // per-vertex texture coordinates (u, v in [0,1])
-    int   matId = 0;
-};
-
-// Möller–Trumbore triangle intersection
-inline bool intersectTriangle(const Ray& ray, const Triangle& tri,
-                               float& tOut, float& uOut, float& vOut) {
-    const float eps = 1e-8f;
-    Vec3 e1 = tri.v[1] - tri.v[0];
-    Vec3 e2 = tri.v[2] - tri.v[0];
-    Vec3 h  = cross(ray.d, e2);
-    float a = dot(e1, h);
-    if (std::fabs(a) < eps) return false;
-    float f = 1.0f / a;
-    Vec3 s  = ray.o - tri.v[0];
-    float u = f * dot(s, h);
-    if (u < 0.0f || u > 1.0f) return false;
-    Vec3 q  = cross(s, e1);
-    float v = f * dot(ray.d, q);
-    if (v < 0.0f || u + v > 1.0f) return false;
-    float t = f * dot(e2, q);
-    if (t < 1e-4f) return false;
-    tOut = t; uOut = u; vOut = v;
-    return true;
-}
-
-// ---------------------------------------------------------------------------
-// Analytical sphere
-// ---------------------------------------------------------------------------
-
-struct Sphere {
-    Vec3  center{};
-    float radius   = 1.0f;
-    int   matId    = 0;
-    bool  raymarch = false;
-};
-
-// ---------------------------------------------------------------------------
-// Torus geometry (always raymarched; arbitrary symmetry axis)
-// ---------------------------------------------------------------------------
-
-struct Torus {
-    Vec3  center{};
-    Vec3  axis{0.f, 1.f, 0.f};  // symmetry axis (normalised); default Y-up
-    float majorR = 1.0f;         // ring radius
-    float minorR = 0.25f;        // tube radius
-    int   matId  = 0;
-};
-
-// ---------------------------------------------------------------------------
-// SDF primitives + sphere-tracing helpers
-// ---------------------------------------------------------------------------
-
-inline float sdfSphere(Vec3 p, Vec3 c, float r) {
-    return length(p - c) - r;
-}
-
-// Torus with arbitrary symmetry axis (axis must be normalised)
-inline float sdfTorus(Vec3 p, Vec3 c, Vec3 axis, float R, float r) {
-    Vec3  q        = p - c;
-    float axProj   = dot(q, axis);
-    Vec3  planePart = q - axis * axProj;
-    float planeLen  = length(planePart) - R;
-    return std::sqrt(planeLen * planeLen + axProj * axProj) - r;
-}
-
-inline float raymarchSphere(const Ray& ray, const Sphere& s) {
-    float t = 1e-3f;
-    for (int i = 0; i < 256 && t < 1e4f; ++i) {
-        float d = sdfSphere(ray.o + ray.d * t, s.center, s.radius);
-        if (d < 1e-4f) return t;
-        t += d;
-    }
-    return -1.f;
-}
-
-inline float raymarchTorus(const Ray& ray, const Torus& tor) {
-    float t = 1e-3f;
-    for (int i = 0; i < 256 && t < 1e4f; ++i) {
-        float d = sdfTorus(ray.o + ray.d * t, tor.center, tor.axis, tor.majorR, tor.minorR);
-        if (d < 1e-4f) return t;
-        t += d;
-    }
-    return -1.f;
-}
-
-inline Vec3 normalTorus(Vec3 p, const Torus& tor) {
-    const float e = 1e-4f;
-    auto sdf = [&](Vec3 q){ return sdfTorus(q, tor.center, tor.axis, tor.majorR, tor.minorR); };
-    return normalize(Vec3{
-        sdf({p.x+e,p.y,p.z}) - sdf({p.x-e,p.y,p.z}),
-        sdf({p.x,p.y+e,p.z}) - sdf({p.x,p.y-e,p.z}),
-        sdf({p.x,p.y,p.z+e}) - sdf({p.x,p.y,p.z-e})
-    });
-}
-
-// ---------------------------------------------------------------------------
-// Axis-Aligned Bounding Box
-// ---------------------------------------------------------------------------
-
-struct AABB {
-    Vec3 mn{ 1e30f,  1e30f,  1e30f};
-    Vec3 mx{-1e30f, -1e30f, -1e30f};
-
-    void expand(const Vec3& p) {
-        mn.x = std::min(mn.x, p.x); mn.y = std::min(mn.y, p.y); mn.z = std::min(mn.z, p.z);
-        mx.x = std::max(mx.x, p.x); mx.y = std::max(mx.y, p.y); mx.z = std::max(mx.z, p.z);
-    }
-
-    // Slab test: returns true if the ray hits the box within [tMin, tMax]
-    bool intersect(const Ray& ray, float tMin, float tMax) const {
-        for (int i = 0; i < 3; i++) {
-            float inv = 1.0f / ray.d[i];
-            float t0  = (mn[i] - ray.o[i]) * inv;
-            float t1  = (mx[i] - ray.o[i]) * inv;
-            if (inv < 0.0f) std::swap(t0, t1);
-            tMin = std::max(tMin, t0);
-            tMax = std::min(tMax, t1);
-            if (tMax <= tMin) return false;
-        }
-        return true;
-    }
-};
-
-// ---------------------------------------------------------------------------
-// Binary BVH over triangles
-// ---------------------------------------------------------------------------
-
-struct BVHNode {
-    AABB aabb;
-    int  left     = -1;
-    int  right    = -1;
-    int  triStart = 0;
-    int  triCount = 0;  // > 0 → leaf
-};
 
 // ---------------------------------------------------------------------------
 // PBR Scene
@@ -325,7 +137,6 @@ private:
     }
 
     void buildNode(int nodeIdx, int start, int end) {
-        // Build AABB for this range
         AABB aabb;
         for (int i = start; i < end; i++) {
             const Triangle& tri = triangles[triIndices[i]];
@@ -334,7 +145,6 @@ private:
 
         int count = end - start;
         if (count <= 4) {
-            // Leaf
             bvh[nodeIdx].aabb     = aabb;
             bvh[nodeIdx].triStart = start;
             bvh[nodeIdx].triCount = count;
@@ -359,7 +169,7 @@ private:
                 return ca < cb;
             });
 
-        int mid    = start + count / 2;
+        int mid      = start + count / 2;
         int leftIdx  = (int)bvh.size(); bvh.push_back(BVHNode{});
         int rightIdx = (int)bvh.size(); bvh.push_back(BVHNode{});
 
