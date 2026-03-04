@@ -226,6 +226,45 @@ std::unique_ptr<PBRScene> loadFromFile(const std::string& yamlPath) {
                 if (on["axis"])   tor.axis   = normalize(parseVec3(on["axis"]));
                 scene->tori.push_back(tor);
 
+            } else if (type == "plane") {
+                Plane pl;
+                pl.matId  = matId;
+                pl.offset = on["offset"] ? on["offset"].as<float>() : 0.0f;
+                if (on["normal"]) pl.normal = normalize(parseVec3(on["normal"]));
+                scene->planes.push_back(pl);
+
+            } else if (type == "box") {
+                Box box;
+                box.matId = matId;
+                if (on["center"])      box.center = parseVec3(on["center"]);
+                if (on["half_extents"]) box.half  = parseVec3(on["half_extents"]);
+                scene->boxes.push_back(box);
+
+            } else if (type == "capsule") {
+                Capsule cap;
+                cap.matId  = matId;
+                cap.radius = on["radius"] ? on["radius"].as<float>() : 0.3f;
+                if (on["a"]) cap.a = parseVec3(on["a"]);
+                if (on["b"]) cap.b = parseVec3(on["b"]);
+                scene->capsules.push_back(cap);
+
+            } else if (type == "cylinder") {
+                Cylinder cyl;
+                cyl.matId      = matId;
+                cyl.radius     = on["radius"]      ? on["radius"].as<float>()      : 0.3f;
+                cyl.halfHeight = on["half_height"] ? on["half_height"].as<float>() : 0.5f;
+                if (on["center"]) cyl.center = parseVec3(on["center"]);
+                if (on["axis"])   cyl.axis   = normalize(parseVec3(on["axis"]));
+                scene->cylinders.push_back(cyl);
+
+            } else if (type == "rounded_box") {
+                RoundedBox rb;
+                rb.matId        = matId;
+                rb.cornerRadius = on["corner_radius"] ? on["corner_radius"].as<float>() : 0.1f;
+                if (on["center"])       rb.center = parseVec3(on["center"]);
+                if (on["half_extents"]) rb.half   = parseVec3(on["half_extents"]);
+                scene->roundedBoxes.push_back(rb);
+
             } else {
                 std::fprintf(stderr, "[scene_loader] Unknown object type '%s'\n",
                              type.c_str());
@@ -236,13 +275,14 @@ std::unique_ptr<PBRScene> loadFromFile(const std::string& yamlPath) {
     // Build BVH over triangle soup
     scene->buildBVH();
 
-    std::fprintf(stdout, "[scene_loader] Loaded '%s': %zu triangles, %zu spheres, %zu tori, %zu materials, %zu textures\n",
+    std::fprintf(stdout,
+                 "[scene_loader] Loaded '%s': %zu tri, %zu sph, %zu tori, "
+                 "%zu planes, %zu boxes, %zu caps, %zu cyls, %zu rboxes, %zu mats\n",
                  scene->name.c_str(),
-                 scene->triangles.size(),
-                 scene->spheres.size(),
-                 scene->tori.size(),
-                 scene->materials.size(),
-                 scene->textures.size());
+                 scene->triangles.size(), scene->spheres.size(), scene->tori.size(),
+                 scene->planes.size(), scene->boxes.size(), scene->capsules.size(),
+                 scene->cylinders.size(), scene->roundedBoxes.size(),
+                 scene->materials.size());
 
     return scene;
 }

@@ -3,6 +3,11 @@
 #include "triangle.hpp"
 #include "sphere.hpp"
 #include "torus.hpp"
+#include "plane.hpp"
+#include "box.hpp"
+#include "capsule.hpp"
+#include "cylinder.hpp"
+#include "rounded_box.hpp"
 #include "bvh.hpp"
 #include "hit.hpp"
 #include "material.hpp"
@@ -18,10 +23,15 @@
 
 struct PBRScene {
     std::string name;
-    std::vector<Triangle> triangles;
-    std::vector<Sphere>   spheres;
-    std::vector<Torus>    tori;
-    std::vector<Material> materials;
+    std::vector<Triangle>    triangles;
+    std::vector<Sphere>      spheres;
+    std::vector<Torus>       tori;
+    std::vector<Plane>       planes;
+    std::vector<Box>         boxes;
+    std::vector<Capsule>     capsules;
+    std::vector<Cylinder>    cylinders;
+    std::vector<RoundedBox>  roundedBoxes;
+    std::vector<Material>    materials;
     std::vector<Texture>  textures;   // diffuse textures referenced by materials
     Camera camera;
 
@@ -89,6 +99,57 @@ struct PBRScene {
                 best.t = t; best.hit = true; best.matId = tor.matId;
                 best.p = ray.o + ray.d * t;
                 best.n = normalTorus(best.p, tor);
+            }
+        }
+
+        // Planes (analytic — exact single-step)
+        for (const auto& pl : planes) {
+            float denom = dot(ray.d, pl.normal);
+            if (std::fabs(denom) < 1e-6f) continue;
+            float t = (pl.offset - dot(ray.o, pl.normal)) / denom;
+            if (t < 1e-4f || t >= best.t) continue;
+            best.t = t; best.hit = true; best.matId = pl.matId;
+            best.p = ray.o + ray.d * t;
+            best.n = denom < 0.f ? pl.normal : pl.normal * -1.f;
+        }
+
+        // Boxes (raymarched)
+        for (const auto& box : boxes) {
+            float t = raymarchBox(ray, box);
+            if (t > 0.f && t < best.t) {
+                best.t = t; best.hit = true; best.matId = box.matId;
+                best.p = ray.o + ray.d * t;
+                best.n = normalBox(best.p, box);
+            }
+        }
+
+        // Capsules (raymarched)
+        for (const auto& cap : capsules) {
+            float t = raymarchCapsule(ray, cap);
+            if (t > 0.f && t < best.t) {
+                best.t = t; best.hit = true; best.matId = cap.matId;
+                best.p = ray.o + ray.d * t;
+                best.n = normalCapsule(best.p, cap);
+            }
+        }
+
+        // Cylinders (raymarched)
+        for (const auto& cyl : cylinders) {
+            float t = raymarchCylinder(ray, cyl);
+            if (t > 0.f && t < best.t) {
+                best.t = t; best.hit = true; best.matId = cyl.matId;
+                best.p = ray.o + ray.d * t;
+                best.n = normalCylinder(best.p, cyl);
+            }
+        }
+
+        // Rounded boxes (raymarched)
+        for (const auto& rb : roundedBoxes) {
+            float t = raymarchRoundedBox(ray, rb);
+            if (t > 0.f && t < best.t) {
+                best.t = t; best.hit = true; best.matId = rb.matId;
+                best.p = ray.o + ray.d * t;
+                best.n = normalRoundedBox(best.p, rb);
             }
         }
 
