@@ -68,90 +68,32 @@ struct PBRScene {
                 testTriangle(i, ray, best);
 
         // Spheres — analytic or raymarched per-object
-        for (const auto& sph : spheres) {
-            if (sph.raymarch) {
-                float t = raymarchSphere(ray, sph);
-                if (t > 0.f && t < best.t) {
-                    best.t = t; best.hit = true; best.matId = sph.matId;
-                    best.p = ray.o + ray.d * t;
-                    best.n = normalize(best.p - sph.center);
-                }
-            } else {
-                Vec3  oc   = ray.o - sph.center;
-                float b    = dot(oc, ray.d);
-                float c    = dot(oc, oc) - sph.radius * sph.radius;
-                float disc = b * b - c;
-                if (disc < 0.0f) continue;
-                float sq = std::sqrt(disc);
-                float t  = -b - sq;
-                if (t < 1e-4f) t = -b + sq;
-                if (t < 1e-4f || t >= best.t) continue;
-                best.t = t; best.hit = true; best.matId = sph.matId;
-                best.p = ray.o + ray.d * t;
-                best.n = normalize(best.p - sph.center);
-            }
-        }
+        for (const auto& sph : spheres)
+            intersectSphere(ray, sph, best);
 
         // Tori (always raymarched)
-        for (const auto& tor : tori) {
-            float t = raymarchTorus(ray, tor);
-            if (t > 0.f && t < best.t) {
-                best.t = t; best.hit = true; best.matId = tor.matId;
-                best.p = ray.o + ray.d * t;
-                best.n = normalTorus(best.p, tor);
-            }
-        }
+        for (const auto& tor : tori)
+            intersectTorus(ray, tor, best);
 
         // Planes (analytic — exact single-step)
-        for (const auto& pl : planes) {
-            float denom = dot(ray.d, pl.normal);
-            if (std::fabs(denom) < 1e-6f) continue;
-            float t = (pl.offset - dot(ray.o, pl.normal)) / denom;
-            if (t < 1e-4f || t >= best.t) continue;
-            best.t = t; best.hit = true; best.matId = pl.matId;
-            best.p = ray.o + ray.d * t;
-            best.n = denom < 0.f ? pl.normal : pl.normal * -1.f;
-        }
+        for (const auto& pl : planes)
+            intersectPlane(ray, pl, best);
 
         // Boxes (raymarched)
-        for (const auto& box : boxes) {
-            float t = raymarchBox(ray, box);
-            if (t > 0.f && t < best.t) {
-                best.t = t; best.hit = true; best.matId = box.matId;
-                best.p = ray.o + ray.d * t;
-                best.n = normalBox(best.p, box);
-            }
-        }
+        for (const auto& box : boxes)
+            intersectBox(ray, box, best);
 
         // Capsules (raymarched)
-        for (const auto& cap : capsules) {
-            float t = raymarchCapsule(ray, cap);
-            if (t > 0.f && t < best.t) {
-                best.t = t; best.hit = true; best.matId = cap.matId;
-                best.p = ray.o + ray.d * t;
-                best.n = normalCapsule(best.p, cap);
-            }
-        }
+        for (const auto& cap : capsules)
+            intersectCapsule(ray, cap, best);
 
         // Cylinders (raymarched)
-        for (const auto& cyl : cylinders) {
-            float t = raymarchCylinder(ray, cyl);
-            if (t > 0.f && t < best.t) {
-                best.t = t; best.hit = true; best.matId = cyl.matId;
-                best.p = ray.o + ray.d * t;
-                best.n = normalCylinder(best.p, cyl);
-            }
-        }
+        for (const auto& cyl : cylinders)
+            intersectCylinder(ray, cyl, best);
 
         // Rounded boxes (raymarched)
-        for (const auto& rb : roundedBoxes) {
-            float t = raymarchRoundedBox(ray, rb);
-            if (t > 0.f && t < best.t) {
-                best.t = t; best.hit = true; best.matId = rb.matId;
-                best.p = ray.o + ray.d * t;
-                best.n = normalRoundedBox(best.p, rb);
-            }
-        }
+        for (const auto& rb : roundedBoxes)
+            intersectRoundedBox(ray, rb, best);
 
         return best;
     }

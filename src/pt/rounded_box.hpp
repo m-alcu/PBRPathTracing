@@ -36,3 +36,15 @@ inline Vec3 normalRoundedBox(Vec3 p, const RoundedBox& rb) {
         sdf({p.x,p.y,p.z+e}) - sdf({p.x,p.y,p.z-e})
     });
 }
+
+inline void intersectRoundedBox(const Ray &ray, const RoundedBox &rb, Hit &best)
+{
+    float t = raymarchRoundedBox(ray, rb);
+    if (t > 0.f && t < best.t){
+        best.t = t;
+        best.hit = true;
+        best.matId = rb.matId;
+        best.p = ray.o + ray.d * t;
+        best.n = normalRoundedBox(best.p, rb);
+    }
+}

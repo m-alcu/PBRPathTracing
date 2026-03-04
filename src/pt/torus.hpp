@@ -39,3 +39,16 @@ inline Vec3 normalTorus(Vec3 p, const Torus& tor) {
         sdf({p.x,p.y,p.z+e}) - sdf({p.x,p.y,p.z-e})
     });
 }
+
+inline void intersectTorus(const Ray &ray, const Torus &tor, Hit &best)
+{
+    float t = raymarchTorus(ray, tor);
+    if (t > 0.f && t < best.t)
+    {
+        best.t = t;
+        best.hit = true;
+        best.matId = tor.matId;
+        best.p = ray.o + ray.d * t;
+        best.n = normalTorus(best.p, tor);
+    }
+}

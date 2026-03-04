@@ -39,3 +39,14 @@ inline Vec3 normalCylinder(Vec3 p, const Cylinder& cyl) {
         sdf({p.x,p.y,p.z+e}) - sdf({p.x,p.y,p.z-e})
     });
 }
+
+inline void intersectCylinder(const Ray &ray, const Cylinder &cyl, Hit &best) {
+    float t = raymarchCylinder(ray, cyl);
+    if (t > 0.f && t < best.t){
+        best.t = t;
+        best.hit = true;
+        best.matId = cyl.matId;
+        best.p = ray.o + ray.d * t;
+        best.n = normalCylinder(best.p, cyl);
+    }
+}

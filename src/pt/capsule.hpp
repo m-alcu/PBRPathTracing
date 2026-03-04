@@ -36,3 +36,16 @@ inline Vec3 normalCapsule(Vec3 p, const Capsule& cap) {
         sdf({p.x,p.y,p.z+e}) - sdf({p.x,p.y,p.z-e})
     });
 }
+
+inline void intersectCapsule(const Ray &ray, const Capsule &cap, Hit &best)
+{
+    float t = raymarchCapsule(ray, cap);
+    if (t > 0.f && t < best.t)
+    {
+        best.t = t;
+        best.hit = true;
+        best.matId = cap.matId;
+        best.p = ray.o + ray.d * t;
+        best.n = normalCapsule(best.p, cap);
+    }
+}

@@ -35,3 +35,16 @@ inline Vec3 normalBox(Vec3 p, const Box& box) {
         sdf({p.x,p.y,p.z+e}) - sdf({p.x,p.y,p.z-e})
     });
 }
+
+inline void intersectBox(const Ray &ray, const Box &box, Hit &best)
+{
+    float t = raymarchBox(ray, box);
+    if (t > 0.f && t < best.t)
+    {
+        best.t = t;
+        best.hit = true;
+        best.matId = box.matId;
+        best.p = ray.o + ray.d * t;
+        best.n = normalBox(best.p, box);
+    }
+}
