@@ -57,10 +57,10 @@ scene:
       radius: 100.0
       material: white
 
-    # Area light
+    # Area light (inside the box, flush with ceiling at y=1)
     - type: sphere
-      center: [0.0, 100.6, 0.0]
-      radius: 0.8
+      center: [0.0, 0.85, 0.0]
+      radius: 0.2
       material: light
 
     # Left sphere

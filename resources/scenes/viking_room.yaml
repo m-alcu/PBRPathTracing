@@ -1,0 +1,27 @@
+scene:
+  name: "Viking Room"
+  camera:
+    position: [2.0, 1.2, 2.0]
+    target:   [0.08, 0.35, 0.0]
+    fov: 45.0
+  materials:
+    - name: light
+      albedo:   [1.0, 1.0, 1.0]
+      emission: [15.0, 13.0, 10.0]
+    - name: floor
+      albedo:   [0.4, 0.4, 0.4]
+  objects:
+    # Warm area light above the scene
+    - type: sphere
+      center: [0.08, 3.0, 0.0]
+      radius: 0.8
+      material: light
+    # Ground plane
+    - type: plane
+      normal: [0, 1, 0]
+      offset: -0.11
+      material: floor
+    # Viking room mesh with texture from MTL
+    - type: obj
+      file: "resources/objs/viking_room/viking_room.obj"
+      use_obj_materials: true
