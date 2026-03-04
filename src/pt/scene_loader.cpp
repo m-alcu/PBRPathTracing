@@ -211,10 +211,20 @@ std::unique_ptr<PBRScene> loadFromFile(const std::string& yamlPath) {
 
             } else if (type == "sphere") {
                 Sphere sph;
-                sph.matId  = matId;
-                sph.radius = on["radius"] ? on["radius"].as<float>() : 1.0f;
-                if (on["center"]) sph.center = parseVec3(on["center"]);
+                sph.matId   = matId;
+                sph.radius  = on["radius"] ? on["radius"].as<float>() : 1.0f;
+                if (on["center"])   sph.center   = parseVec3(on["center"]);
+                if (on["raymarch"]) sph.raymarch = on["raymarch"].as<bool>();
                 scene->spheres.push_back(sph);
+
+            } else if (type == "torus") {
+                Torus tor;
+                tor.matId  = matId;
+                tor.majorR = on["major_radius"] ? on["major_radius"].as<float>() : 1.0f;
+                tor.minorR = on["minor_radius"]  ? on["minor_radius"].as<float>()  : 0.25f;
+                if (on["center"]) tor.center = parseVec3(on["center"]);
+                if (on["axis"])   tor.axis   = normalize(parseVec3(on["axis"]));
+                scene->tori.push_back(tor);
 
             } else {
                 std::fprintf(stderr, "[scene_loader] Unknown object type '%s'\n",
@@ -226,10 +236,11 @@ std::unique_ptr<PBRScene> loadFromFile(const std::string& yamlPath) {
     // Build BVH over triangle soup
     scene->buildBVH();
 
-    std::fprintf(stdout, "[scene_loader] Loaded '%s': %zu triangles, %zu spheres, %zu materials, %zu textures\n",
+    std::fprintf(stdout, "[scene_loader] Loaded '%s': %zu triangles, %zu spheres, %zu tori, %zu materials, %zu textures\n",
                  scene->name.c_str(),
                  scene->triangles.size(),
                  scene->spheres.size(),
+                 scene->tori.size(),
                  scene->materials.size(),
                  scene->textures.size());
 

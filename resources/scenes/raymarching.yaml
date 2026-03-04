@@ -1,0 +1,59 @@
+scene:
+  name: "Raymarching Demo"
+  camera:
+    position: [0, 2.5, 7]
+    target:   [0, 0.5, 0]
+    fov: 45.0
+  materials:
+    - name: light
+      albedo:   [1.0, 1.0, 1.0]
+      emission: [10.0, 9.0, 7.0]
+    - name: floor
+      albedo:   [0.75, 0.75, 0.75]
+    - name: red_metal
+      albedo:   [0.9, 0.2, 0.1]
+      metallic: 1.0
+      roughness: 0.3
+    - name: blue_diffuse
+      albedo:   [0.15, 0.35, 0.9]
+    - name: gold_metal
+      albedo:   [1.0, 0.78, 0.15]
+      metallic: 1.0
+      roughness: 0.1
+    - name: teal
+      albedo:   [0.1, 0.75, 0.65]
+  objects:
+    # Area light
+    - type: sphere
+      center: [0, 6, 2]
+      radius: 1.5
+      material: light
+    # Floor (large sphere, analytical)
+    - type: sphere
+      center: [0, -100, 0]
+      radius: 100.0
+      material: floor
+    # Raymarched spheres
+    - type: sphere
+      center: [-2, 0.5, 0]
+      radius: 0.5
+      material: red_metal
+      raymarch: true
+    - type: sphere
+      center: [2, 0.5, 0]
+      radius: 0.5
+      material: blue_diffuse
+      raymarch: true
+    # Tori (always raymarched)
+    - type: torus
+      center: [0, 0.3, 0]
+      major_radius: 1.0
+      minor_radius: 0.3
+      axis: [0, 1, 0]
+      material: gold_metal
+    - type: torus
+      center: [-2.5, 0.25, -1.5]
+      major_radius: 0.6
+      minor_radius: 0.25
+      axis: [1, 0, 0]
+      material: teal
