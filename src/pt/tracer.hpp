@@ -57,13 +57,51 @@ inline void makeONB(const Vec3& n, Vec3& t, Vec3& b) {
 }
 
 // ---------------------------------------------------------------------------
+// GGX Microfacet BRDF helpers
+// ---------------------------------------------------------------------------
+
+// Schlick Fresnel approximation: F = F0 + (1-F0)*(1-cosTheta)^5
+inline Vec3 fresnelSchlick(float cosTheta, const Vec3& F0) {
+    float f = std::pow(1.0f - cosTheta, 5.0f);
+    return F0 + (Vec3{1.0f - F0.x, 1.0f - F0.y, 1.0f - F0.z}) * f;
+}
+
+// GGX Smith G1 (masking/shadowing) for one direction.
+// alpha = roughness^2 (Disney perceptual remapping)
+inline float G1_GGX(float NdotV, float alpha) {
+    float a2 = alpha * alpha;
+    float denom = NdotV + std::sqrt(a2 + (1.0f - a2) * NdotV * NdotV);
+    return 2.0f * NdotV / std::max(denom, 1e-6f);
+}
+
+// Uncorrelated Smith G2 = G1(NoL) * G1(NoV)
+inline float G2_GGX(float NoL, float NoV, float alpha) {
+    return G1_GGX(NoL, alpha) * G1_GGX(NoV, alpha);
+}
+
+// Sample microfacet normal from GGX NDF in local space (z = surface normal).
+// alpha = roughness^2; returns unit vector in upper hemisphere.
+inline Vec3 sampleGGX(float alpha, float u1, float u2) {
+    float phi = 2.0f * 3.14159265f * u2;
+    // Inversion of GGX CDF: cos²θ = (1-u1) / (1 + (α²-1)*u1)
+    float a2 = alpha * alpha;
+    float cosTheta2 = (1.0f - u1) / std::max(1.0f + (a2 - 1.0f) * u1, 1e-6f);
+    float cosTheta  = std::sqrt(std::max(0.0f, cosTheta2));
+    float sinTheta  = std::sqrt(std::max(0.0f, 1.0f - cosTheta2));
+    return {sinTheta * std::cos(phi), sinTheta * std::sin(phi), cosTheta};
+}
+
+// ---------------------------------------------------------------------------
 // Path tracer
 // ---------------------------------------------------------------------------
+
+enum class BRDFMode { Lambertian = 0, GGX = 1 };
 
 template<typename RNG>
 inline Vec3 tracePath(Ray ray, RNG& rng,
                       const std::vector<Material>& mats,
-                      const PBRScene& scene)
+                      const PBRScene& scene,
+                      BRDFMode brdfMode = BRDFMode::GGX)
 {
     Vec3 L{0.0f, 0.0f, 0.0f};
     Vec3 beta{1.0f, 1.0f, 1.0f};
@@ -83,30 +121,75 @@ inline Vec3 tracePath(Ray ray, RNG& rng,
         // Emission (area lights)
         L += beta * m.emission;
 
-        // --- Scatter: metallic specular or Lambertian diffuse ---
-        Vec3 wi;
-        if (rng.nextFloat() < m.metallic) {
-            // Specular (metallic) bounce: reflect + roughness fuzz
-            Vec3 reflected = reflect(ray.d, h.n);
-            wi = normalize(reflected + m.roughness * randomInUnitSphere(rng));
-            // Fuzz can push wi below the surface → the ray is absorbed
-            if (dot(wi, h.n) <= 0.0f) break;
-        } else {
-            // Lambertian diffuse bounce (cosine-weighted hemisphere)
-            Vec3 t, b;
-            makeONB(h.n, t, b);
-            Vec3 local = sampleCosineHemisphere(rng.nextFloat(), rng.nextFloat());
-            wi = normalize(t * local.x + b * local.y + h.n * local.z);
-        }
-
-        // Throughput: use texture albedo if available, else material albedo
+        // Resolve albedo (texture overrides material colour)
         Vec3 albedo = m.albedo;
         if (m.albedoTex >= 0 && m.albedoTex < (int)scene.textures.size()) {
             float r, g, b;
             scene.textures[m.albedoTex].sample(h.tu, h.tv, r, g, b);
             albedo = Vec3{r, g, b} * (1.0f / 255.0f);
         }
-        beta *= albedo;
+
+        Vec3 wi;
+        if (brdfMode == BRDFMode::GGX) {
+            // --- GGX PBR scatter ---
+            Vec3 wo{-ray.d.x, -ray.d.y, -ray.d.z};
+            float NoV = std::max(dot(h.n, wo), 1e-4f);
+
+            float alpha = m.roughness * m.roughness; // Disney perceptual → GGX alpha
+
+            // F0: 0.04 for dielectrics, albedo tint for metals
+            Vec3 F0{0.04f + (albedo.x - 0.04f) * m.metallic,
+                    0.04f + (albedo.y - 0.04f) * m.metallic,
+                    0.04f + (albedo.z - 0.04f) * m.metallic};
+
+            // Fresnel-based probability of specular vs diffuse bounce
+            Vec3 Fapprox = fresnelSchlick(NoV, F0);
+            float pSpec  = std::clamp((Fapprox.x + Fapprox.y + Fapprox.z) / 3.0f,
+                                      0.05f, 0.95f);
+
+            if (rng.nextFloat() < pSpec) {
+                // GGX specular bounce
+                Vec3 t, b;
+                makeONB(h.n, t, b);
+                Vec3 hLocal = sampleGGX(alpha, rng.nextFloat(), rng.nextFloat());
+                Vec3 wh = normalize(t * hLocal.x + b * hLocal.y + h.n * hLocal.z);
+
+                wi = reflect(ray.d, wh);
+                float NoL = dot(h.n, wi);
+                if (NoL <= 0.0f) break; // microfacet below surface → absorb
+
+                float VoH = std::max(dot(wo, wh), 1e-4f);
+                float NoH = std::max(dot(h.n, wh), 1e-4f);
+                NoL = std::max(NoL, 1e-4f);
+
+                Vec3  F = fresnelSchlick(VoH, F0);
+                float G = G2_GGX(NoL, NoV, alpha);
+                // Weight = BRDF * cos(θi) / pdf = F * G * VoH / (NoV * NoH)
+                beta *= F * (G * VoH / (NoV * NoH)) / pSpec;
+            } else {
+                // Lambertian diffuse (metals have no diffuse)
+                Vec3 t, b;
+                makeONB(h.n, t, b);
+                Vec3 local = sampleCosineHemisphere(rng.nextFloat(), rng.nextFloat());
+                wi = normalize(t * local.x + b * local.y + h.n * local.z);
+                beta *= albedo * (1.0f - m.metallic) / (1.0f - pSpec);
+            }
+        } else {
+            // --- Lambertian + fuzz specular (original model) ---
+            if (rng.nextFloat() < m.metallic) {
+                // Specular: reflect + roughness fuzz
+                Vec3 reflected = reflect(ray.d, h.n);
+                wi = normalize(reflected + m.roughness * randomInUnitSphere(rng));
+                if (dot(wi, h.n) <= 0.0f) break; // fuzz pushed below surface
+            } else {
+                // Lambertian diffuse
+                Vec3 t, b;
+                makeONB(h.n, t, b);
+                Vec3 local = sampleCosineHemisphere(rng.nextFloat(), rng.nextFloat());
+                wi = normalize(t * local.x + b * local.y + h.n * local.z);
+            }
+            beta *= albedo;
+        }
 
         // Russian roulette from depth 3 onwards
         if (depth >= 3) {

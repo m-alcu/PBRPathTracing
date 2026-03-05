@@ -166,7 +166,8 @@ int main(int, char**) {
     // Main loop
     // ------------------------------------------------------------------
     bool running    = true;
-    bool useHashRng = true;  // false → PCG32
+    bool useHashRng = true;   // false → PCG32
+    BRDFMode brdfMode = BRDFMode::GGX;
 
     while (running) {
         // ---- Events --------------------------------------------------
@@ -220,7 +221,7 @@ int main(int, char**) {
                                 HashRNG rng(seed);
                                 Ray ray = scene->camera.generateRay(
                                     px, py, W, H, rng.nextFloat(), rng.nextFloat());
-                                accum[py * W + px] += tracePath(ray, rng, scene->materials, *scene);
+                                accum[py * W + px] += tracePath(ray, rng, scene->materials, *scene, brdfMode);
                             } else {
                                 uint64_t seed =
                                 (uint64_t)((py * W + px) * 1099511628211ull
@@ -228,7 +229,7 @@ int main(int, char**) {
                                 RNG rng(seed);
                                 Ray ray = scene->camera.generateRay(
                                     px, py, W, H, rng.nextFloat(), rng.nextFloat());
-                                accum[py * W + px] += tracePath(ray, rng, scene->materials, *scene);
+                                accum[py * W + px] += tracePath(ray, rng, scene->materials, *scene, brdfMode);
                             }
                         }
                     }
@@ -288,6 +289,15 @@ int main(int, char**) {
             bool changed  = ImGui::RadioButton("PCG32", &rngChoice, 0); ImGui::SameLine();
             changed      |= ImGui::RadioButton("Hash",  &rngChoice, 1);
             if (changed) { useHashRng = (rngChoice == 1); resetAccum(); }
+        }
+
+        ImGui::Separator();
+        {
+            int modeChoice = (brdfMode == BRDFMode::GGX) ? 1 : 0;
+            ImGui::Text("BRDF:"); ImGui::SameLine();
+            bool changed  = ImGui::RadioButton("Lambertian", &modeChoice, 0); ImGui::SameLine();
+            changed      |= ImGui::RadioButton("GGX",        &modeChoice, 1);
+            if (changed) { brdfMode = (modeChoice == 1) ? BRDFMode::GGX : BRDFMode::Lambertian; resetAccum(); }
         }
 
         ImGui::Separator();
