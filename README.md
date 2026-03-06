@@ -102,6 +102,10 @@ For metallic conductors, light does not penetrate the material — it reflects o
 | `metallic` | [0, 1] | Probability of choosing the specular lobe over the diffuse lobe at each bounce |
 | `roughness` | [0, 1] | Amount of micro-surface perturbation applied to the ideal reflected direction |
 
+<p align="left">
+  <img src="resources/metals.png" width="800">
+</p>
+
 #### Perfect mirror reflection
 
 A perfect specular reflector maps an incoming direction $\omega_o$ to a unique outgoing direction by reflecting about the surface normal $\mathbf{n}$:
