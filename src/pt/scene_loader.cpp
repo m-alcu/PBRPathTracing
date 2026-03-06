@@ -19,10 +19,12 @@ static Vec3 parseVec3(const YAML::Node& n) {
 
 static Material parseMaterial(const YAML::Node& node) {
     Material m;
-    if (node["albedo"])    m.albedo    = parseVec3(node["albedo"]);
-    if (node["emission"])  m.emission  = parseVec3(node["emission"]);
-    if (node["metallic"])  m.metallic  = node["metallic"].as<float>();
-    if (node["roughness"]) m.roughness = node["roughness"].as<float>();
+    if (node["albedo"])       m.albedo       = parseVec3(node["albedo"]);
+    if (node["emission"])     m.emission     = parseVec3(node["emission"]);
+    if (node["metallic"])     m.metallic     = node["metallic"].as<float>();
+    if (node["roughness"])    m.roughness    = node["roughness"].as<float>();
+    if (node["ior"])          m.ior          = node["ior"].as<float>();
+    if (node["transmission"]) m.transmission = node["transmission"].as<float>();
     return m;
 }
 

@@ -26,7 +26,7 @@ inline bool intersectTriangle(const Ray& ray, const Triangle& tri,
     float v = f * dot(ray.d, q);
     if (v < 0.0f || u + v > 1.0f) return false;
     float t = f * dot(e2, q);
-    if (t < 1e-4f) return false;
+    if (t < 1e-6f) return false;
     tOut = t; uOut = u; vOut = v;
     return true;
 }

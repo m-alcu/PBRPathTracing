@@ -116,7 +116,7 @@ private:
 
     void traverseBVH(int nodeIdx, const Ray& ray, Hit& best) const {
         const BVHNode& node = bvh[nodeIdx];
-        if (!node.aabb.intersect(ray, 1e-4f, best.t)) return;
+        if (!node.aabb.intersect(ray, 1e-6f, best.t)) return;
 
         if (node.triCount > 0) {
             for (int i = node.triStart; i < node.triStart + node.triCount; i++) {

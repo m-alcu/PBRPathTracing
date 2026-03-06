@@ -1,0 +1,81 @@
+scene:
+  name: "Glass Dragon"
+
+  camera:
+    position: [0.0, 0.28, 1.4]
+    target:   [-0.015, 0.07, 0.03]
+    fov: 42.0
+
+  materials:
+    - name: glass
+      transmission: 1.0
+      ior: 1.5
+
+    - name: ground
+      albedo: [0.72, 0.72, 0.72]
+
+    - name: back_wall
+      albedo: [0.88, 0.88, 0.88]
+
+    # Bright colored spheres behind the dragon to reveal refraction
+    - name: red
+      albedo: [0.90, 0.08, 0.05]
+
+    - name: blue
+      albedo: [0.05, 0.20, 0.95]
+
+    - name: green
+      albedo: [0.05, 0.85, 0.10]
+
+    - name: yellow
+      albedo: [0.95, 0.85, 0.02]
+
+    - name: light
+      albedo:   [0.0, 0.0, 0.0]
+      emission: [22.0, 20.0, 16.0]
+
+  objects:
+    # Glass dragon (centered near origin, ~0.7 units tall)
+    - type: obj
+      file: "resources/objs/dragon.obj"
+      material: glass
+
+    # Ground plane: top surface at y = -0.283 (dragon's feet)
+    - type: sphere
+      center: [0.0, -100.283, 0.0]
+      radius: 100.0
+      material: ground
+
+    # Back wall clearly behind the dragon (dragon back is at z ≈ -0.47)
+    - type: sphere
+      center: [0.0, 0.0, -102.8]
+      radius: 100.0
+      material: back_wall
+
+    # Four large colored spheres at z = -1.1, clearly behind the dragon.
+    # They fill the background visible through the glass body.
+    - type: sphere
+      center: [-0.30, 0.20, -1.1]
+      radius: 0.20
+      material: red
+
+    - type: sphere
+      center: [ 0.10, 0.30, -1.1]
+      radius: 0.18
+      material: blue
+
+    - type: sphere
+      center: [ 0.28, 0.05, -1.1]
+      radius: 0.20
+      material: green
+
+    - type: sphere
+      center: [-0.12, -0.05, -1.1]
+      radius: 0.18
+      material: yellow
+
+    # Overhead area light
+    - type: sphere
+      center: [0.0, 5.5, 1.5]
+      radius: 1.8
+      material: light

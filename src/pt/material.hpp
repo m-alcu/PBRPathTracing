@@ -6,5 +6,7 @@ struct Material {
     Vec3  emission{0.0f, 0.0f, 0.0f}; // emitted radiance (area lights)
     float metallic{0.0f};              // 0 = pure diffuse, 1 = pure specular
     float roughness{0.0f};             // 0 = perfect mirror, 1 = fully rough metal
+    float ior{1.5f};                   // index of refraction (glass ≈ 1.5)
+    float transmission{0.0f};          // 0 = opaque, 1 = fully transmissive (dielectric)
     int   albedoTex{-1};               // index into PBRScene::textures, -1 = none
 };
