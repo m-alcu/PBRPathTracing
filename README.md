@@ -85,7 +85,7 @@ The Lambertian (perfectly diffuse) BRDF is:
 f_r(\mathbf{x},\,\omega_i,\,\omega_o) = \frac{\rho}{\pi}
 ```
 
-It is constant — scattering is equal in all directions — and $\rho \in [0,1]^3$ is the albedo (fraction of light reflected per colour channel). The factor $1/\pi$ normalises energy conservation:
+It is constant — scattering is equal in all directions — and $\rho \in [0,1]^3$ (3D) is the albedo (fraction of light reflected per colour channel). The factor $1/\pi$ normalises energy conservation:
 
 ```math
 \int_{\Omega} f_r\,(\omega_i \cdot \mathbf{n})\,d\omega_i = \int_{\Omega} \frac{\rho}{\pi}\cos\theta\,d\omega_i = \rho
@@ -422,7 +422,7 @@ At each non-specular hit point $\mathbf{x}$ with outgoing direction $\omega_o$:
 L_{\text{NEE}} = \beta \cdot \frac{f_r(\omega_o, \omega_\ell)\,(\omega_\ell\cdot\mathbf{n})\,L_e^{(\ell)}}{p_\text{select}\,p_\ell(\omega_\ell)}
 ```
 
-where $p_\text{select} = 1/N_L$ and $L_e^{(\ell)}$ is the emitted radiance of the chosen light.
+where $p_{\rm sel} = 1/N_L$ is the uniform light-selection probability and $L_e^{(\ell)}$ is the emitted radiance of the chosen light.
 
 #### Sphere Light — Cone Sampling
 
