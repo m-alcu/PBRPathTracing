@@ -24,13 +24,14 @@ inline float raymarchSphere(const Ray& ray, const Sphere& s) {
     return -1.f;
 }
 
-inline void intersectSphere(const Ray& ray, const Sphere& sph, Hit& best) {
+inline void intersectSphere(const Ray& ray, const Sphere& sph, Hit& best, int sphIdx = -1) {
     if (sph.raymarch) {
         float t = raymarchSphere(ray, sph);
         if (t > 0.f && t < best.t) {
             best.t = t; best.hit = true; best.matId = sph.matId;
             best.p = ray.o + ray.d * t;
             best.n = normalize(best.p - sph.center);
+            best.sphereIdx = sphIdx;
         }
     } else {
         Vec3  oc   = ray.o - sph.center;
@@ -45,5 +46,6 @@ inline void intersectSphere(const Ray& ray, const Sphere& sph, Hit& best) {
         best.t = t; best.hit = true; best.matId = sph.matId;
         best.p = ray.o + ray.d * t;
         best.n = normalize(best.p - sph.center);
+        best.sphereIdx = sphIdx;
     }
 }

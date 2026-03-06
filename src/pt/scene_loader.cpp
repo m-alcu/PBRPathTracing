@@ -274,8 +274,9 @@ std::unique_ptr<PBRScene> loadFromFile(const std::string& yamlPath) {
         }
     }
 
-    // Build BVH over triangle soup
+    // Build BVH over triangle soup and collect emissive spheres for NEE
     scene->buildBVH();
+    scene->buildLights();
 
     std::fprintf(stdout,
                  "[scene_loader] Loaded '%s': %zu tri, %zu sph, %zu tori, "

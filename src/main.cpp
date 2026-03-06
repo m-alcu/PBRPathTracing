@@ -168,6 +168,7 @@ int main(int, char**) {
     bool running    = true;
     bool useHashRng = true;   // false → PCG32
     BRDFMode brdfMode = BRDFMode::GGX;
+    bool useNEE     = true;
 
     while (running) {
         // ---- Events --------------------------------------------------
@@ -221,7 +222,7 @@ int main(int, char**) {
                                 HashRNG rng(seed);
                                 Ray ray = scene->camera.generateRay(
                                     px, py, W, H, rng.nextFloat(), rng.nextFloat());
-                                accum[py * W + px] += tracePath(ray, rng, scene->materials, *scene, brdfMode);
+                                accum[py * W + px] += tracePath(ray, rng, scene->materials, *scene, brdfMode, useNEE);
                             } else {
                                 uint64_t seed =
                                 (uint64_t)((py * W + px) * 1099511628211ull
@@ -229,7 +230,7 @@ int main(int, char**) {
                                 RNG rng(seed);
                                 Ray ray = scene->camera.generateRay(
                                     px, py, W, H, rng.nextFloat(), rng.nextFloat());
-                                accum[py * W + px] += tracePath(ray, rng, scene->materials, *scene, brdfMode);
+                                accum[py * W + px] += tracePath(ray, rng, scene->materials, *scene, brdfMode, useNEE);
                             }
                         }
                     }
@@ -298,6 +299,13 @@ int main(int, char**) {
             bool changed  = ImGui::RadioButton("Lambertian", &modeChoice, 0); ImGui::SameLine();
             changed      |= ImGui::RadioButton("GGX",        &modeChoice, 1);
             if (changed) { brdfMode = (modeChoice == 1) ? BRDFMode::GGX : BRDFMode::Lambertian; resetAccum(); }
+        }
+
+        ImGui::Separator();
+        {
+            bool prev = useNEE;
+            ImGui::Checkbox("NEE (direct light sampling)", &useNEE);
+            if (useNEE != prev) resetAccum();
         }
 
         ImGui::Separator();

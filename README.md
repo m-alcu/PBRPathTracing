@@ -12,7 +12,11 @@ Ray Tracing (broad technique)\
 
 - **Unbiased Monte Carlo path tracing** with cosine-weighted importance sampling
 - **Lambertian (diffuse) BRDF** with correct throughput accounting
+- **GGX microfacet BRDF** (Cook-Torrance) with Smith masking, Schlick Fresnel, Disney roughness remapping
+- **Dielectric (glass) material** — Fresnel reflectance, Snell's law refraction, total internal reflection
 - **Metallic (specular) BRDF** with configurable roughness fuzz; probabilistic lobe mixing
+- **Next Event Estimation (NEE)** — explicit direct light sampling at every bounce, dramatically reducing noise from small area lights
+- **Multiple Importance Sampling (MIS)** — power heuristic combines NEE and BSDF sampling to eliminate bias while preserving variance reduction
 - **Russian roulette** path termination
 - **Binary BVH** (bounding volume hierarchy) over triangle meshes for fast ray–mesh intersection
 - **Analytical sphere** intersection in the same scene
@@ -20,9 +24,9 @@ Ray Tracing (broad technique)\
 - **Progressive accumulation**: each frame adds one sample per pixel; the image refines indefinitely
 - **Multi-threaded rendering**: one `std::thread` per CPU core, row-striped (no contention)
 - **SDL3 streaming texture**: the float accumulation buffer is tone-mapped and uploaded to the GPU every frame via `SDL_UpdateTexture`
-- **YAML scene files**: define camera, materials (`albedo`, `emission`, `metallic`, `roughness`), OBJ meshes and spheres
+- **YAML scene files**: define camera, materials (`albedo`, `emission`, `metallic`, `roughness`, `ior`, `transmission`), OBJ meshes and spheres
 - **Interactive orbit camera**: left-drag to orbit, scroll to zoom — resets accumulation on change
-- **Dear ImGui panel**: live SPP counter, FPS, thread count, scene switcher
+- **Dear ImGui panel**: live SPP counter, FPS, thread count, scene switcher, BRDF mode selector
 
 ---
 
@@ -251,7 +255,307 @@ Applied from `depth ≥ 3`, this eliminates low-contribution paths while maintai
 
 ---
 
-### 9. Ray–Triangle Intersection (Möller–Trumbore)
+### 9. GGX Microfacet BRDF (Cook-Torrance)
+
+Real surfaces are not perfectly smooth — they consist of many tiny mirror-like **microfacets**. Microfacet theory models the aggregate appearance via a statistical distribution of surface normals.
+
+The Cook-Torrance specular BRDF is:
+
+```math
+f_r^{\text{spec}}(\omega_i,\omega_o) = \frac{D(\mathbf{h})\,F(\omega_o,\mathbf{h})\,G(\omega_i,\omega_o)}{4\,(\mathbf{n}\cdot\omega_i)\,(\mathbf{n}\cdot\omega_o)}
+```
+
+where $\mathbf{h} = \mathrm{normalize}(\omega_i + \omega_o)$ is the **half-vector** (the microfacet normal that would reflect $\omega_i$ toward $\omega_o$).
+
+| Term | Name | Role |
+|------|------|------|
+| $D(\mathbf{h})$ | Normal Distribution Function (NDF) | Fraction of microfacets facing direction $\mathbf{h}$ |
+| $F(\omega_o, \mathbf{h})$ | Fresnel term | Fraction of light reflected vs. refracted |
+| $G(\omega_i, \omega_o)$ | Masking-shadowing function | Fraction of microfacets that are visible to both the light and the viewer |
+
+#### Normal Distribution Function — GGX (Trowbridge-Reitz)
+
+The GGX NDF gives a longer specular tail than Blinn-Phong, matching real materials better:
+
+```math
+D(\mathbf{h}) = \frac{\alpha^2}{\pi \left[ (\mathbf{n}\cdot\mathbf{h})^2(\alpha^2-1)+1 \right]^2}
+```
+
+where $\alpha$ is the **GGX roughness** parameter. Disney perceptual remapping squares the artist-facing `roughness` parameter so that equal steps feel visually equal:
+
+```math
+\alpha = \texttt{roughness}^2
+```
+
+#### Schlick Fresnel Approximation
+
+The Fresnel equations give the fraction of light reflected at an interface. Schlick's approximation is efficient and accurate:
+
+```math
+F(\omega_o,\mathbf{h}) = F_0 + (1-F_0)(1 - \omega_o\cdot\mathbf{h})^5
+```
+
+$F_0$ is the **normal-incidence reflectance** — the colour of the surface when viewed straight on:
+
+```math
+F_0 = \begin{cases} 0.04 & \text{dielectric} \\ \text{albedo} & \text{metallic} \end{cases}
+```
+
+For a conductor/dielectric blend (metallic workflow):
+```math
+F_0 = 0.04 + (\text{albedo} - 0.04)\times\texttt{metallic}
+```
+
+#### Smith Masking-Shadowing (G2)
+
+Microfacets near the horizon can be shadowed from the light or masked from the viewer. Smith's uncorrelated G2:
+
+```math
+G(\omega_i,\omega_o) = G_1(\omega_i)\,G_1(\omega_o)
+```
+
+```math
+G_1(\omega) = \frac{2\,(\mathbf{n}\cdot\omega)}{\mathbf{n}\cdot\omega + \sqrt{\alpha^2 + (1-\alpha^2)(\mathbf{n}\cdot\omega)^2}}
+```
+
+#### GGX Importance Sampling
+
+To reduce variance, the microfacet normal $\mathbf{h}$ is importance-sampled from the NDF. Inverting the GGX CDF gives the polar angle:
+
+```math
+\cos^2\theta = \frac{1 - u_1}{1 + (\alpha^2-1)\,u_1}, \qquad \phi = 2\pi u_2
+```
+
+The corresponding $\omega_i$ is obtained by reflecting $\omega_o$ about $\mathbf{h}$. The PDF of the sampled direction $\omega_i$ in solid angle measure is:
+
+```math
+p_{\text{GGX}}(\omega_i) = \frac{D(\mathbf{h})\,(\mathbf{n}\cdot\mathbf{h})}{4\,(\omega_o\cdot\mathbf{h})}
+```
+
+When this PDF is divided into the BRDF × cos, the throughput weight per specular bounce is:
+
+```math
+\beta \;\leftarrow\; \beta \otimes F \cdot \frac{G\,(\omega_o\cdot\mathbf{h})}{(\mathbf{n}\cdot\omega_o)\,(\mathbf{n}\cdot\mathbf{h})}
+```
+
+#### Probabilistic Lobe Mixing (Diffuse + Specular)
+
+At each bounce the path randomly selects the specular lobe with probability $p_s$ based on the average Fresnel at the current viewing angle:
+
+```math
+p_s = \mathrm{clamp}\!\left(\frac{F_x + F_y + F_z}{3},\;0.05,\;0.95\right)
+```
+
+The final throughput is divided by $p_s$ (specular) or $(1-p_s)$ (diffuse) to keep the mixed estimator unbiased.
+
+---
+
+### 10. Dielectric (Glass) Material
+
+A dielectric (glass, water) transmits light through the surface. At each interface, light splits between **reflection** and **refraction** according to the Fresnel equations.
+
+#### Snell's Law (Vector Form)
+
+Given incident direction $\mathbf{d}$ (pointing toward the surface), face normal $\hat{\mathbf{n}}$ (pointing toward the incident medium), and relative IOR $\eta = n_1/n_2$:
+
+```math
+\mathbf{t} = \eta\,\mathbf{d} + \left(\eta\cos\theta_i - \cos\theta_t\right)\hat{\mathbf{n}}
+```
+
+where $\cos\theta_i = -\mathbf{d}\cdot\hat{\mathbf{n}}$ and $\cos\theta_t = \sqrt{1 - \eta^2(1-\cos^2\theta_i)}$.
+
+If $\eta^2(1-\cos^2\theta_i) > 1$ there is **Total Internal Reflection (TIR)** — no refracted ray exists and all light reflects back.
+
+#### Fresnel Reflectance (Schlick for Dielectrics)
+
+```math
+R_0 = \left(\frac{n_1 - n_2}{n_1 + n_2}\right)^2
+```
+
+```math
+R(\theta) = R_0 + (1-R_0)(1-\cos\theta_i)^5
+```
+
+$R(\theta)$ is the probability of reflection; $1 - R(\theta)$ is the probability of transmission.
+
+#### Stochastic BSDF
+
+Since the reflectance is a probability, the path tracer applies it stochastically: with probability $R$ reflect the ray, with probability $1-R$ refract it. Beta is unchanged (glass carries energy without absorption):
+
+```math
+\beta \leftarrow \beta \otimes (1,1,1) = \beta
+```
+
+Glass paths skip Russian roulette to avoid terminating paths whose throughput should remain at 1.
+
+---
+
+### 11. The Problem with Naive Path Tracing
+
+In a scene with a small area light, the probability that a randomly chosen BSDF sample points directly at the light is tiny:
+
+```math
+P(\text{hit light}) = \frac{\Omega_{\text{light}}}{2\pi} \;\ll\; 1
+```
+
+where $\Omega_{\text{light}}$ is the solid angle subtended by the light. The estimator is unbiased but has enormous variance — the image looks noisy even after thousands of samples. For a sphere light of radius $r$ at distance $d$:
+
+```math
+\Omega_{\text{light}} = 2\pi\left(1 - \sqrt{1 - \frac{r^2}{d^2}}\right)
+```
+
+A Cornell-box ceiling light ($r=0.1$, $d\approx1.8$) subtends roughly $0.1\,\text{sr}$ out of the $2\pi\approx6.28\,\text{sr}$ upper hemisphere — only about 1.6% of random diffuse samples hit it.
+
+---
+
+### 12. Next Event Estimation (NEE)
+
+NEE eliminates this inefficiency by **explicitly sampling area lights** at every diffuse bounce instead of hoping a random direction hits one.
+
+At each non-specular hit point $\mathbf{x}$ with outgoing direction $\omega_o$:
+
+1. Choose a light $\ell$ uniformly at random from $N_L$ sphere lights.
+2. Sample a direction $\omega_\ell$ toward light $\ell$ with PDF $p_\ell(\omega_\ell)$ in solid angle measure.
+3. Cast a **shadow ray** from $\mathbf{x}$ toward $\omega_\ell$. If the light is visible, add:
+
+```math
+L_{\text{NEE}} = \beta \cdot \frac{f_r(\omega_o, \omega_\ell)\,(\omega_\ell\cdot\mathbf{n})\,L_e^{(\ell)}}{p_\text{select}\,p_\ell(\omega_\ell)}
+```
+
+where $p_\text{select} = 1/N_L$ and $L_e^{(\ell)}$ is the emitted radiance of the chosen light.
+
+#### Sphere Light — Cone Sampling
+
+A sphere of centre $\mathbf{c}$ and radius $r$ subtends a cone of half-angle $\theta_{\max}$ from point $\mathbf{x}$:
+
+```math
+\sin\theta_{\max} = \frac{r}{\|\mathbf{c} - \mathbf{x}\|}
+\qquad\Longrightarrow\qquad
+\cos\theta_{\max} = \sqrt{1 - \frac{r^2}{\|\mathbf{c}-\mathbf{x}\|^2}}
+```
+
+Sampling uniformly within this cone (i.e., sampling a solid angle of $2\pi(1-\cos\theta_{\max})$):
+
+```math
+\cos\theta = 1 - u_1\,(1-\cos\theta_{\max}), \qquad \phi = 2\pi u_2
+```
+
+The resulting PDF (uniform over the cone solid angle) is:
+
+```math
+p_\ell(\omega) = \frac{1}{2\pi(1 - \cos\theta_{\max})}
+```
+
+A local frame is built with $\hat{z}$ pointing from $\mathbf{x}$ toward $\mathbf{c}$, and the sampled direction is:
+
+```math
+\omega_\ell = \sin\theta\cos\phi\;\hat{T} + \sin\theta\sin\phi\;\hat{B} + \cos\theta\;\hat{z}
+```
+
+#### Shadow Ray Visibility Test
+
+The shadow ray origin is offset by $\varepsilon\hat{\mathbf{n}}$ to avoid self-intersection. The ray is visible to the light if:
+- it hits nothing at all, or
+- the first object it hits is the sampled sphere light itself.
+
+This is tested by comparing `Hit::sphereIdx` of the shadow ray's closest intersection against the index of the chosen light sphere.
+
+---
+
+### 13. Multiple Importance Sampling (MIS)
+
+NEE introduces a problem: **double-counting**. Both the NEE estimator and the ordinary BSDF path sampling can account for the same path from $\mathbf{x}$ to the light. Naively adding both would overestimate the illumination.
+
+#### The Two-Sample Estimator
+
+Consider two estimators for the same quantity $I = \int f(x)\,dx$:
+- Estimator 1 uses sampling strategy with PDF $p_1$ — good at some regions.
+- Estimator 2 uses sampling strategy with PDF $p_2$ — good at others.
+
+A naive average $\frac{1}{2}(f(x_1)/p_1(x_1) + f(x_2)/p_2(x_2))$ has high variance near the boundaries of each strategy's effective region.
+
+MIS assigns a **weight** $w_s(x)$ to each estimator so that $\sum_s w_s(x) = 1$, giving the combined estimator:
+
+```math
+\hat{I}_{\text{MIS}} = \sum_{s} \frac{1}{n_s} \sum_{j=1}^{n_s} w_s(x_{s,j})\,\frac{f(x_{s,j})}{p_s(x_{s,j})}
+```
+
+This is **unbiased** as long as $\sum_s w_s(x) = 1$ whenever $f(x) \neq 0$.
+
+#### Balance Heuristic
+
+The simplest valid choice (Veach 1995):
+
+```math
+w_s(x) = \frac{n_s\,p_s(x)}{\sum_t n_t\,p_t(x)}
+```
+
+With one sample per strategy ($n_s = n_t = 1$):
+
+```math
+w_{\text{NEE}}(\omega) = \frac{p_\text{NEE}(\omega)}{p_\text{NEE}(\omega) + p_\text{BSDF}(\omega)}, \qquad
+w_{\text{BSDF}}(\omega) = \frac{p_\text{BSDF}(\omega)}{p_\text{NEE}(\omega) + p_\text{BSDF}(\omega)}
+```
+
+Note $w_\text{NEE} + w_\text{BSDF} = 1$ — the condition is satisfied.
+
+#### Power Heuristic (β = 2)
+
+The balance heuristic can still have high variance when one PDF is much larger than the other. Raising the PDFs to a power $\beta$ before normalising suppresses contributions from strategies with poor PDFs more aggressively:
+
+```math
+w_s(x) = \frac{\left[n_s\,p_s(x)\right]^\beta}{\sum_t \left[n_t\,p_t(x)\right]^\beta}
+```
+
+With $\beta = 2$ and one sample each (used in this renderer):
+
+```math
+w_{\text{NEE}}(\omega) = \frac{p_\text{NEE}^2}{p_\text{NEE}^2 + p_\text{BSDF}^2}, \qquad
+w_{\text{BSDF}}(\omega) = \frac{p_\text{BSDF}^2}{p_\text{NEE}^2 + p_\text{BSDF}^2}
+```
+
+When one PDF dominates (e.g., $p_\text{NEE} \gg p_\text{BSDF}$), the weight approaches 1 for NEE and 0 for BSDF — concentrating variance where each estimator is effective. Veach showed $\beta = 2$ is near-optimal in practice.
+
+#### Full NEE + MIS Path Contribution
+
+For a path that bounces diffusely at $\mathbf{x}$ and then continues to the next hit:
+
+**Direct light contribution (NEE sample at $\mathbf{x}$):**
+```math
+\Delta L_{\text{direct}} = \beta \cdot w_{\text{NEE}}(\omega_\ell) \cdot \frac{f_r(\omega_o,\omega_\ell)\,(\omega_\ell\cdot\mathbf{n})\,L_e}{p_\text{NEE}(\omega_\ell)}
+```
+
+**Emissive surface hit via BSDF sample (at next bounce):**
+```math
+\Delta L_{\text{emissive}} = \beta \cdot w_{\text{BSDF}}(\omega_i) \cdot L_e
+```
+
+where $w_{\text{BSDF}}(\omega_i)$ uses $p_\text{BSDF}(\omega_i)$ computed at the bounce that generated $\omega_i$ and $p_\text{NEE}(\omega_i) = p_\ell(\omega_i) / N_L$ for the hypothetical NEE sample in the same direction.
+
+#### BSDF PDF for the GGX + Lambertian Mixture
+
+The mixture sampling strategy selects specular with probability $p_s$ and diffuse with probability $1-p_s$. The combined PDF of direction $\omega_i$ is:
+
+```math
+p_\text{BSDF}(\omega_i) = p_s \cdot p_\text{GGX}(\omega_i) + (1-p_s) \cdot p_\text{Lambert}(\omega_i)
+```
+
+```math
+p_\text{GGX}(\omega_i) = \frac{D(\mathbf{h})\,(\mathbf{n}\cdot\mathbf{h})}{4\,(\omega_o\cdot\mathbf{h})}, \qquad
+p_\text{Lambert}(\omega_i) = \frac{\mathbf{n}\cdot\omega_i}{\pi}
+```
+
+This is evaluated at both the BSDF-sampled direction (stored as `prevBSDFPdf`) and at the NEE-sampled direction (for the MIS denominator of the direct contribution).
+
+#### Why Not Apply MIS to Glass Paths?
+
+Glass is a **delta BSDF** — the reflected/refracted direction is perfectly determined by the geometry. The corresponding PDF is a Dirac delta, meaning NEE cannot sample any direction that a glass path would take. Therefore:
+- No NEE is performed at glass surfaces.
+- When a BSDF path through glass hits a light, the emission is added with weight 1 (`prevSpecular = true`).
+
+---
+
+### 15. Ray–Triangle Intersection (Möller–Trumbore)
 
 Given ray `r(t) = o + t·d` and triangle vertices `v0, v1, v2`:
 
@@ -279,7 +583,7 @@ The hit point is $\mathbf{p} = \mathbf{o} + t\,\mathbf{d}$. The shading normal i
 
 ---
 
-### 10. Ray–Sphere Intersection
+### 16. Ray–Sphere Intersection
 
 For sphere centre $\mathbf{c}$ and radius $r$, substitute $\mathbf{r}(t)$ into $|\mathbf{p} - \mathbf{c}|^2 = r^2$:
 
@@ -297,7 +601,7 @@ Surface normal at hit: $\mathbf{n} = \mathrm{normalize}(\mathbf{p} - \mathbf{c})
 
 ---
 
-### 11. Binary BVH
+### 17. Binary BVH
 
 Triangle meshes are accelerated with a top-down **binary BVH** built by recursive spatial median splitting:
 
@@ -323,7 +627,7 @@ Early exit uses the current best hit `t` as `tMax`, discarding nodes that cannot
 
 ---
 
-### 12. Tone Mapping and Display
+### 18. Tone Mapping and Display
 
 The accumulation buffer stores HDR linear radiance as `Vec3`. Each frame:
 

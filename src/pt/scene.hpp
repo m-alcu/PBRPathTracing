@@ -37,11 +37,25 @@ struct PBRScene {
 
     // BVH (built after geometry is loaded)
     std::vector<BVHNode> bvh;
-    std::vector<int>     triIndices;  // reordered triangle indices
+    std::vector<int>     triIndices;       // reordered triangle indices
+
+    // Emissive sphere indices (for NEE direct light sampling)
+    std::vector<int>     lightSphereIndices;
 
     // -----------------------------------------------------------------------
     // BVH construction
     // -----------------------------------------------------------------------
+
+    // Collect sphere indices whose material has nonzero emission.
+    // Call after all geometry and materials are loaded.
+    void buildLights() {
+        lightSphereIndices.clear();
+        for (int i = 0; i < (int)spheres.size(); ++i) {
+            const Material& m = materials[spheres[i].matId];
+            if (m.emission.x > 0.0f || m.emission.y > 0.0f || m.emission.z > 0.0f)
+                lightSphereIndices.push_back(i);
+        }
+    }
 
     void buildBVH() {
         if (triangles.empty()) return;
@@ -68,8 +82,8 @@ struct PBRScene {
                 testTriangle(i, ray, best);
 
         // Spheres — analytic or raymarched per-object
-        for (const auto& sph : spheres)
-            intersectSphere(ray, sph, best);
+        for (int i = 0; i < (int)spheres.size(); ++i)
+            intersectSphere(ray, spheres[i], best, i);
 
         // Tori (always raymarched)
         for (const auto& tor : tori)
