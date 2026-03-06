@@ -1,0 +1,85 @@
+scene:
+  name: "Cornell Box (glass spheres)"
+
+  # Camera looking straight into the box along -Z
+  camera:
+    position: [0.0, 0.0, 3.5]
+    target:   [0.0, 0.0, 0.0]
+    fov: 40.0
+
+  materials:
+    - name: white
+      albedo: [0.73, 0.73, 0.73]
+
+    - name: red
+      albedo: [0.65, 0.05, 0.05]
+
+    - name: green
+      albedo: [0.12, 0.45, 0.15]
+
+    - name: light
+      albedo:   [0.0, 0.0, 0.0]
+      emission: [15.0, 15.0, 15.0]
+
+    # Standard window glass (IOR 1.5)
+    - name: glass
+      transmission: 1.0
+      ior: 1.5
+
+    # Dense flint glass / crystal (IOR 1.8) — stronger refraction and more TIR
+    - name: crystal
+      transmission: 1.0
+      ior: 1.8
+
+  objects:
+    # --- Cornell box walls (sphere trick: radius 100, center at ±101) ---
+
+    # Left wall (red)
+    - type: sphere
+      center: [-101.0, 0.0, 0.0]
+      radius: 100.0
+      material: red
+
+    # Right wall (green)
+    - type: sphere
+      center: [101.0, 0.0, 0.0]
+      radius: 100.0
+      material: green
+
+    # Floor
+    - type: sphere
+      center: [0.0, -101.0, 0.0]
+      radius: 100.0
+      material: white
+
+    # Ceiling
+    - type: sphere
+      center: [0.0, 101.0, 0.0]
+      radius: 100.0
+      material: white
+
+    # Back wall
+    - type: sphere
+      center: [0.0, 0.0, -101.0]
+      radius: 100.0
+      material: white
+
+    # Area light — small disc against the ceiling (y ≈ 1.0)
+    - type: sphere
+      center: [0.0, 0.97, 0.0]
+      radius: 0.18
+      material: light
+
+    # --- Glass spheres ---
+
+    # Left: standard glass (IOR 1.5) — radius 0.42, resting on floor (y = -1 + 0.42)
+    - type: sphere
+      center: [-0.42, -0.58, -0.10]
+      radius: 0.42
+      material: glass
+
+    # Right: dense crystal (IOR 1.8) — slightly smaller, different depth
+    - type: sphere
+      center: [0.42, -0.62, 0.15]
+      radius: 0.38
+      material: crystal

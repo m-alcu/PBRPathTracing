@@ -128,14 +128,18 @@ inline Vec3 tracePath(Ray ray, RNG& rng,
             // finds no geometry: we sample sky
             // returns a radiance value (white-to-blue gradient based on the ray's Y component), 
             // which gets multiplied by the current path throughput "beta" and accumulated into "L"
+            // Then break exits the depth loop because the path is complete — there's nothing more to bounce off of.
             L += beta * sky(ray.d);
             break;
         }
 
         const Material& m = mats[h.matId];
 
-        // Emission (area lights)
-        L += beta * m.emission;
+        // Emission (area lights).
+        // Guard: only add when emission is nonzero — avoids Inf*0=NaN when beta
+        // has overflowed to Inf after an extreme GGX grazing-angle weight.
+        if (m.emission.x > 0.0f || m.emission.y > 0.0f || m.emission.z > 0.0f)
+            L += beta * m.emission;
 
         // Resolve albedo (texture overrides material colour)
         Vec3 albedo = m.albedo;
@@ -257,5 +261,10 @@ inline Vec3 tracePath(Ray ray, RNG& rng,
         ray.d = wi;
     }
 
+    // Discard any path that produced NaN or negative radiance rather than letting
+    // it permanently corrupt the accumulation buffer.
+    if (!std::isfinite(L.x) || !std::isfinite(L.y) || !std::isfinite(L.z) ||
+        L.x < 0.0f || L.y < 0.0f || L.z < 0.0f)
+        return {0.0f, 0.0f, 0.0f};
     return L;
 }
