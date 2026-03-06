@@ -356,6 +356,10 @@ The final throughput is divided by $p_s$ (specular) or $(1-p_s)$ (diffuse) to ke
 
 ### 10. Dielectric (Glass) Material
 
+<p align="left">
+  <img src="resources/glass.png" glass="600">
+</p>
+
 A dielectric (glass, water) transmits light through the surface. At each interface, light splits between **reflection** and **refraction** according to the Fresnel equations.
 
 #### Snell's Law (Vector Form)
@@ -560,6 +564,13 @@ Glass is a **delta BSDF** — the reflected/refracted direction is perfectly det
 ---
 
 ### 15. Ray–Triangle Intersection (Möller–Trumbore)
+
+<p align="left">
+  <img src="resources/viking.png" glass="600">
+  </br>
+  Model: Viking Room by nigelgoh.
+</p>
+
 
 Given ray `r(t) = o + t·d` and triangle vertices `v0, v1, v2`:
 

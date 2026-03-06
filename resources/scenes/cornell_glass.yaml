@@ -64,10 +64,10 @@ scene:
       radius: 100.0
       material: white
 
-    # Area light — small disc against the ceiling (y ≈ 1.0)
-    - type: sphere
-      center: [0.0, 0.97, 0.0]
-      radius: 0.18
+    # Area light — square panel against the ceiling (y = 1.0)
+    - type: box
+      center:       [0.0, 0.99, 0.0]
+      half_extents: [0.20, 0.01, 0.20]
       material: light
 
     # --- Glass spheres ---
