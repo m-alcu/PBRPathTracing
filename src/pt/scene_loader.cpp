@@ -41,7 +41,8 @@ static void loadObj(const std::string& filename, int fallbackMatId,
                     std::vector<Material>* outMaterials = nullptr,
                     std::vector<Texture>*  outTextures  = nullptr,
                     std::unordered_map<std::string, int>* texCache = nullptr,
-                    bool useMtl = false) {
+                    bool useMtl = false,
+                    float scale = 1.0f) {
     namespace fs = std::filesystem;
 
     tinyobj::ObjReaderConfig cfg;
@@ -118,9 +119,9 @@ static void loadObj(const std::string& filename, int fallbackMatId,
             for (int v = 0; v < 3; v++) {
                 tinyobj::index_t idx = shape.mesh.indices[idxOff + v];
                 tri.v[v] = {
-                    attrib.vertices[3 * idx.vertex_index + 0],
-                    attrib.vertices[3 * idx.vertex_index + 1],
-                    attrib.vertices[3 * idx.vertex_index + 2]
+                    attrib.vertices[3 * idx.vertex_index + 0] * scale,
+                    attrib.vertices[3 * idx.vertex_index + 1] * scale,
+                    attrib.vertices[3 * idx.vertex_index + 2] * scale
                 };
                 if (idx.normal_index >= 0) {
                     tri.n[v] = {
@@ -227,8 +228,9 @@ std::unique_ptr<PBRScene> loadFromFile(const std::string& yamlPath) {
             if (type == "obj") {
                 std::string file = on["file"].as<std::string>();
                 bool useMtl = on["use_obj_materials"] && on["use_obj_materials"].as<bool>();
+                float scale = on["scale"] ? on["scale"].as<float>() : 1.0f;
                 loadObj(file, matId, scene->triangles, &scene->materials,
-                        &scene->textures, &texCache, useMtl);
+                        &scene->textures, &texCache, useMtl, scale);
 
             } else if (type == "sphere") {
                 Sphere sph;

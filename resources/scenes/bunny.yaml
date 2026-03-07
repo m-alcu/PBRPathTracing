@@ -2,9 +2,9 @@ scene:
   name: "Bunny"
 
   camera:
-    position: [1.1, 0.9, 0.0]
-    target:   [0.0, 0.0, 0.0]
-    fov: 50.0
+    position: [0.0, 0.6, 2.5]
+    target:   [0.0, 0.5, 0.0]
+    fov: 45.0
 
   materials:
     - name: white
@@ -15,12 +15,13 @@ scene:
     - name: ground
       roughness: 0.8
       texture:  "resources/checker-map_tho.png"
-      uv_scale: 2.0
+      uv_scale: 1.0
 
   objects:
     - type: obj
       file: "resources/objs/bunny.obj"
       material: white
+      scale: 3.0
 
     - type: plane
       normal: [0, 1, 0]
