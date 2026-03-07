@@ -92,7 +92,7 @@ struct GPUMaterial {
     float ior;
     float trans;
     int   albedoTex;  // -1 = no texture, else index into scene textures
-    float pad;
+    float uvScale;
 };
 
 // ---------------------------------------------------------------------------
@@ -256,7 +256,7 @@ public:
                 g.roughness=m.roughness;
                 g.ior=m.ior; g.trans=m.transmission;
                 g.albedoTex=m.albedoTex;
-                g.pad=0;
+                g.uvScale=m.uvScale;
                 mats.push_back(g);
             }
             mSSBO[4] = makeSSBO(mats.data(), mats.size() * sizeof(GPUMaterial));

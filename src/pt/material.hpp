@@ -9,4 +9,5 @@ struct Material {
     float ior{1.5f};                   // index of refraction (glass ≈ 1.5)
     float transmission{0.0f};          // 0 = opaque, 1 = fully transmissive (dielectric)
     int   albedoTex{-1};               // index into PBRScene::textures, -1 = none
+    float uvScale{1.0f};               // UV tiling multiplier (for textured planes)
 };

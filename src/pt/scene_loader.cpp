@@ -26,6 +26,7 @@ static Material parseMaterial(const YAML::Node& node) {
     if (node["roughness"])    m.roughness    = node["roughness"].as<float>();
     if (node["ior"])          m.ior          = node["ior"].as<float>();
     if (node["transmission"]) m.transmission = node["transmission"].as<float>();
+    if (node["uv_scale"])     m.uvScale      = node["uv_scale"].as<float>();
     if (node["checker"] && node["checker"].as<bool>()) m.albedoTex = -2;
     return m;
 }
@@ -178,7 +179,23 @@ std::unique_ptr<PBRScene> loadFromFile(const std::string& yamlPath) {
         for (const auto& mn : sn["materials"]) {
             int idx = (int)scene->materials.size();
             if (mn["name"]) matIndex[mn["name"].as<std::string>()] = idx;
-            scene->materials.push_back(parseMaterial(mn));
+            Material mat = parseMaterial(mn);
+            if (mn["texture"]) {
+                std::string texPath = mn["texture"].as<std::string>();
+                auto it = texCache.find(texPath);
+                if (it != texCache.end()) {
+                    mat.albedoTex = it->second;
+                } else {
+                    Texture tex = Texture::loadFromFile(texPath);
+                    if (tex.isValid()) {
+                        int texIdx = (int)scene->textures.size();
+                        scene->textures.push_back(std::move(tex));
+                        texCache[texPath] = texIdx;
+                        mat.albedoTex = texIdx;
+                    }
+                }
+            }
+            scene->materials.push_back(mat);
         }
     }
     if (scene->materials.empty())

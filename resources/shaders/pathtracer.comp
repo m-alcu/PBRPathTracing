@@ -43,7 +43,7 @@ struct GPUMaterial {
     float ior;
     float trans;
     int   albedoTex;  // -1 = no texture, else index into uTextures
-    float pad;
+    float uvScale;
 };
 layout(std430, binding = 5) readonly buffer MaterialSSBO    { GPUMaterial materials[]; };
 layout(std430, binding = 6) readonly buffer LightSSBO       { int lights[]; };
@@ -388,9 +388,9 @@ vec3 sampleAlbedo(GPUMaterial mat, float tu, float tv) {
         float check = mod(cx + cz, 2.0);
         return mix(mat.albedoM.xyz, vec3(0.04), check);
     }
+    float s = mat.uvScale > 0.0 ? mat.uvScale : 1.0;
     if (ti >= 0 && ti < uNumTextures) {
-        // CPU loader already flipped V (1-v); just wrap with fract for repeat
-        vec2 uv = vec2(fract(tu), fract(tv));
+        vec2 uv = vec2(fract(tu * s), fract(tv * s));
         return texture(uTextures[ti], uv).rgb;
     }
     return mat.albedoM.xyz;
