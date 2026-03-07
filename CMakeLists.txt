@@ -73,24 +73,12 @@ option(BUILD_TESTS "Build unit tests" ON)
 if(BUILD_TESTS)
     enable_testing()
 
-    FetchContent_Declare(
-        googletest
-        GIT_REPOSITORY https://github.com/google/googletest.git
-        GIT_TAG v1.14.0
-    )
-    set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
-    FetchContent_MakeAvailable(googletest)
-
-    # Math library test
     add_executable(test_math
         tests/test_math.cpp
         src/slib.cpp
         src/smath.cpp
     )
     target_include_directories(test_math PRIVATE ${CMAKE_SOURCE_DIR}/src)
-    target_link_libraries(test_math PRIVATE GTest::gtest_main)
     set_target_properties(test_math PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
-
-    include(GoogleTest)
-    gtest_discover_tests(test_math)
+    add_test(NAME test_math COMMAND test_math)
 endif()
