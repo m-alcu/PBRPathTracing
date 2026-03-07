@@ -220,7 +220,9 @@ inline Vec3 tracePath(Ray ray, RNG& rng,
         if (m.albedoTex >= 0 && m.albedoTex < (int)scene.textures.size()) {
             float r, g, b;
             scene.textures[m.albedoTex].sample(h.tu, h.tv, r, g, b);
-            albedo = Vec3{r, g, b} * (1.0f / 255.0f);
+            albedo = Vec3{std::pow(r / 255.0f, 2.2f),
+                          std::pow(g / 255.0f, 2.2f),
+                          std::pow(b / 255.0f, 2.2f)};
         }
 
         Vec3  wi;

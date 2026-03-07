@@ -1,0 +1,16 @@
+scene:
+  name: "Cornell Water Box"
+
+  # Classic Cornell Box: simple box with water surface.
+  camera:
+    position: [0.0, 0.795, 3.0]
+    target:   [0.0, 0.795, 0.0]
+    fov: 40.0
+
+  # Materials come from the accompanying water.mtl via use_obj_materials.
+  # No explicit materials needed here.
+
+  objects:
+    - type: obj
+      file: "resources/objs/cornell_box/CornellBox-Mirror.obj"
+      use_obj_materials: true

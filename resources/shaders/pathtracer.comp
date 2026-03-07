@@ -1,0 +1,544 @@
+#version 430 core
+#extension GL_ARB_gpu_shader5 : enable   // non-uniform sampler array indexing
+layout(local_size_x = 16, local_size_y = 16) in;
+
+layout(rgba32f, binding = 0) uniform image2D uAccumImage;
+
+// ---------------------------------------------------------------------------
+// SSBOs
+// ---------------------------------------------------------------------------
+
+struct GPUTriangle {
+    // UVs packed into the w-components of otherwise-padded vec4s
+    vec4 v0_matId;   // xyz=v0,  w=matId
+    vec4 v1_u0;      // xyz=v1,  w=uv[0].u
+    vec4 v2_v0;      // xyz=v2,  w=uv[0].v
+    vec4 n0_u1;      // xyz=n0,  w=uv[1].u
+    vec4 n1_v1;      // xyz=n1,  w=uv[1].v
+    vec4 n2_u2;      // xyz=n2,  w=uv[2].u
+    vec4 uv2v_pad;   // x=uv[2].v, yzw=unused
+};
+layout(std430, binding = 1) readonly buffer TriangleSSBO    { GPUTriangle triangles[]; };
+layout(std430, binding = 2) readonly buffer TriIndexSSBO    { int triIndices[]; };
+
+struct GPUBVHNode {
+    vec4 mnLeft;
+    vec4 mxRight;
+    int  triStart;
+    int  triCount;
+    int  pad0, pad1;
+};
+layout(std430, binding = 3) readonly buffer BVHNodeSSBO     { GPUBVHNode bvhNodes[]; };
+
+struct GPUSphere {
+    vec4 cr;
+    int  matId;
+    int  pad0, pad1, pad2;
+};
+layout(std430, binding = 4) readonly buffer SphereSSBO      { GPUSphere spheres[]; };
+
+struct GPUMaterial {
+    vec4  albedoM;    // xyz=albedo,   w=metallic
+    vec4  emitR;      // xyz=emission, w=roughness
+    float ior;
+    float trans;
+    int   albedoTex;  // -1 = no texture, else index into uTextures
+    float uvScale;
+};
+layout(std430, binding = 5) readonly buffer MaterialSSBO    { GPUMaterial materials[]; };
+layout(std430, binding = 6) readonly buffer LightSSBO       { int lights[]; };
+
+struct GPUPlane {
+    vec4 normalOffset;  // xyz=normal, w=offset (plane eq: dot(p,n)=offset)
+    int  matId;
+    int  pad0, pad1, pad2;
+};
+layout(std430, binding = 7) readonly buffer PlaneSSBO       { GPUPlane planes[]; };
+
+struct GPUTorus {
+    vec4 centerR;   // xyz=center, w=majorR
+    vec4 axisMin;   // xyz=axis,   w=minorR
+    int  matId; int pad0, pad1, pad2;
+};
+layout(std430, binding = 8)  readonly buffer TorusSSBO      { GPUTorus      tori[];        };
+
+struct GPUBox {
+    vec4 center;    // xyz=center, w=unused
+    vec4 halfExt;   // xyz=half,   w=unused
+    int  matId; int pad0, pad1, pad2;
+};
+layout(std430, binding = 9)  readonly buffer BoxSSBO        { GPUBox        boxes[];       };
+
+struct GPUCapsule {
+    vec4 aR;        // xyz=a, w=radius
+    vec4 b;         // xyz=b, w=unused
+    int  matId; int pad0, pad1, pad2;
+};
+layout(std430, binding = 10) readonly buffer CapsuleSSBO    { GPUCapsule    capsules[];    };
+
+struct GPUCylinder {
+    vec4 centerR;   // xyz=center, w=radius
+    vec4 axisH;     // xyz=axis,   w=halfHeight
+    int  matId; int pad0, pad1, pad2;
+};
+layout(std430, binding = 11) readonly buffer CylinderSSBO   { GPUCylinder   cylinders[];   };
+
+struct GPURoundedBox {
+    vec4 centerCR;  // xyz=center, w=cornerRadius
+    vec4 halfExt;   // xyz=half,   w=unused
+    int  matId; int pad0, pad1, pad2;
+};
+layout(std430, binding = 12) readonly buffer RoundedBoxSSBO { GPURoundedBox roundedBoxes[]; };
+
+// ---------------------------------------------------------------------------
+// Textures
+// ---------------------------------------------------------------------------
+#define MAX_TEXTURES 16
+uniform sampler2D uTextures[MAX_TEXTURES];
+uniform int       uNumTextures;
+
+// ---------------------------------------------------------------------------
+// Uniforms
+// ---------------------------------------------------------------------------
+uniform ivec2 uSize;
+uniform int   uSampleCount;
+uniform int   uNumSpheres;
+uniform int   uNumBVHNodes;
+uniform int   uNumLights;
+uniform int   uNumPlanes;
+uniform int   uNumTori;
+uniform int   uNumBoxes;
+uniform int   uNumCapsules;
+uniform int   uNumCylinders;
+uniform int   uNumRoundedBoxes;
+uniform int   uBRDFMode;
+uniform int   uUseNEE;
+uniform vec3  uCamPos;
+uniform vec3  uCamFwd;
+uniform vec3  uCamRight;
+uniform vec3  uCamUp;
+uniform float uCamScale;
+uniform float uCamAspect;
+
+// ---------------------------------------------------------------------------
+// RNG
+// ---------------------------------------------------------------------------
+uint g_seed;
+void seedRNG(uint px, uint py, uint s) {
+    g_seed = px*1973u + py*9277u + s*26699u + 748399u;
+    g_seed ^= g_seed<<13u; g_seed ^= g_seed>>17u; g_seed ^= g_seed<<5u;
+}
+float rng() {
+    g_seed ^= g_seed<<13u; g_seed ^= g_seed>>17u; g_seed ^= g_seed<<5u;
+    return float(g_seed & 0x00FFFFFFu) * (1.0/16777216.0);
+}
+
+// ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+const float PI=3.14159265359, INV_PI=0.31830988618, INF=1e30, EPS=1e-4;
+
+// ---------------------------------------------------------------------------
+// Geometry
+// ---------------------------------------------------------------------------
+struct Ray { vec3 o, d; };
+struct Hit {
+    float t;
+    vec3  p, n;
+    float tu, tv;   // texture coordinates
+    int   matId, sphereIdx;
+    bool  hit;
+};
+
+Hit noHit() {
+    Hit h; h.t=INF; h.hit=false; h.matId=0; h.sphereIdx=-1;
+    h.p=vec3(0); h.n=vec3(0,1,0); h.tu=0; h.tv=0; return h;
+}
+
+bool intersectAABB(Ray ray, vec3 mn, vec3 mx, float tMax) {
+    vec3 inv=1.0/ray.d, t0=(mn-ray.o)*inv, t1=(mx-ray.o)*inv;
+    vec3 tNr=min(t0,t1), tFr=max(t0,t1);
+    return min(min(tFr.x,tFr.y),min(tFr.z,tMax)) >
+           max(max(tNr.x,tNr.y),max(tNr.z,1e-6));
+}
+bool intersectTri(Ray ray, vec3 v0, vec3 v1, vec3 v2,
+                  out float ot, out float ou, out float ov) {
+    vec3 e1=v1-v0, e2=v2-v0, h=cross(ray.d,e2);
+    float a=dot(e1,h); if(abs(a)<1e-8) return false;
+    float f=1.0/a; vec3 s=ray.o-v0;
+    float u=f*dot(s,h);   if(u<0.0||u>1.0) return false;
+    vec3  q=cross(s,e1);
+    float v=f*dot(ray.d,q); if(v<0.0||u+v>1.0) return false;
+    float t=f*dot(e2,q);    if(t<1e-6) return false;
+    ot=t; ou=u; ov=v; return true;
+}
+bool intersectSphere(Ray ray, vec3 c, float r, out float ot) {
+    vec3 oc=ray.o-c; float b=dot(oc,ray.d), disc=b*b-dot(oc,oc)+r*r;
+    if(disc<0.0) return false;
+    float sq=sqrt(disc); float t=-b-sq; if(t<EPS) t=-b+sq;
+    if(t<EPS) return false; ot=t; return true;
+}
+
+void traverseBVH(Ray ray, inout Hit best) {
+    if(uNumBVHNodes==0) return;
+    int stack[64], top=0; stack[top++]=0;
+    while(top>0) {
+        GPUBVHNode node=bvhNodes[stack[--top]];
+        if(!intersectAABB(ray, node.mnLeft.xyz, node.mxRight.xyz, best.t)) continue;
+        if(node.triCount>0) {
+            for(int i=node.triStart; i<node.triStart+node.triCount; i++) {
+                GPUTriangle tri=triangles[triIndices[i]];
+                float t,ou,ov;
+                if(intersectTri(ray, tri.v0_matId.xyz, tri.v1_u0.xyz, tri.v2_v0.xyz,
+                                t, ou, ov) && t<best.t) {
+                    best.t=t; best.hit=true;
+                    best.matId=int(round(tri.v0_matId.w));
+                    best.p=ray.o+ray.d*t;
+                    float wb=1.0-ou-ov;
+                    best.n=normalize(tri.n0_u1.xyz*wb + tri.n1_v1.xyz*ou + tri.n2_u2.xyz*ov);
+                    // Interpolate texture coordinates
+                    best.tu = tri.v1_u0.w*wb + tri.n0_u1.w*ou + tri.n2_u2.w*ov;
+                    best.tv = tri.v2_v0.w*wb + tri.n1_v1.w*ou + tri.uv2v_pad.x*ov;
+                    best.sphereIdx=-1;
+                }
+            }
+        } else {
+            stack[top++]=int(round(node.mxRight.w));
+            stack[top++]=int(round(node.mnLeft.w));
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// SDF primitives + raymarching
+// ---------------------------------------------------------------------------
+float sdfTorus(vec3 p, vec3 c, vec3 ax, float R, float r) {
+    vec3 q=p-c; float ap=dot(q,ax);
+    float pl=length(q-ax*ap)-R;
+    return sqrt(pl*pl+ap*ap)-r;
+}
+float sdfBox(vec3 p, vec3 c, vec3 h) {
+    vec3 q=abs(p-c)-h;
+    return length(max(q,0.0))+min(max(q.x,max(q.y,q.z)),0.0);
+}
+float sdfCapsule(vec3 p, vec3 a, vec3 b, float r) {
+    vec3 ab=b-a, ap=p-a;
+    return length(ap-ab*clamp(dot(ap,ab)/dot(ab,ab),0.0,1.0))-r;
+}
+float sdfCylinder(vec3 p, vec3 c, vec3 ax, float r, float h) {
+    vec3 q=p-c; float ap=dot(q,ax);
+    float dx=length(q-ax*ap)-r, dy=abs(ap)-h;
+    return min(max(dx,dy),0.0)+length(max(vec2(dx,dy),0.0));
+}
+float sdfRoundedBox(vec3 p, vec3 c, vec3 h, float cr) {
+    vec3 q=abs(p-c)-(h-cr);
+    return length(max(q,0.0))+min(max(q.x,max(q.y,q.z)),0.0)-cr;
+}
+
+
+void rmTorus(Ray ray, GPUTorus o, inout Hit best) {
+    int mid=o.matId; vec3 c=o.centerR.xyz,ax=o.axisMin.xyz; float R=o.centerR.w,r=o.axisMin.w;
+    float t=1e-3;
+    for(int i=0;i<256&&t<1e4;i++){
+        float d=sdfTorus(ray.o+ray.d*t,c,ax,R,r);
+        if(d<1e-4){if(t<best.t){best.t=t;best.hit=true;best.matId=mid;
+            best.p=ray.o+ray.d*t;
+            float e=1e-4;
+            best.n=normalize(vec3(sdfTorus(best.p+vec3(e,0,0),c,ax,R,r)-sdfTorus(best.p-vec3(e,0,0),c,ax,R,r),
+                                  sdfTorus(best.p+vec3(0,e,0),c,ax,R,r)-sdfTorus(best.p-vec3(0,e,0),c,ax,R,r),
+                                  sdfTorus(best.p+vec3(0,0,e),c,ax,R,r)-sdfTorus(best.p-vec3(0,0,e),c,ax,R,r)));
+            best.sphereIdx=-1;best.tu=0;best.tv=0;} break;} t+=d;}
+}
+void rmBox(Ray ray, GPUBox o, inout Hit best) {
+    int mid=o.matId; vec3 c=o.center.xyz,h=o.halfExt.xyz;
+    float t=1e-3;
+    for(int i=0;i<256&&t<1e4;i++){
+        float d=sdfBox(ray.o+ray.d*t,c,h);
+        if(d<1e-4){if(t<best.t){best.t=t;best.hit=true;best.matId=mid;
+            best.p=ray.o+ray.d*t;
+            float e=1e-4;
+            best.n=normalize(vec3(sdfBox(best.p+vec3(e,0,0),c,h)-sdfBox(best.p-vec3(e,0,0),c,h),
+                                  sdfBox(best.p+vec3(0,e,0),c,h)-sdfBox(best.p-vec3(0,e,0),c,h),
+                                  sdfBox(best.p+vec3(0,0,e),c,h)-sdfBox(best.p-vec3(0,0,e),c,h)));
+            best.sphereIdx=-1;best.tu=0;best.tv=0;} break;} t+=d;}
+}
+void rmCapsule(Ray ray, GPUCapsule o, inout Hit best) {
+    int mid=o.matId; vec3 a=o.aR.xyz,b=o.b.xyz; float r=o.aR.w;
+    float t=1e-3;
+    for(int i=0;i<256&&t<1e4;i++){
+        float d=sdfCapsule(ray.o+ray.d*t,a,b,r);
+        if(d<1e-4){if(t<best.t){best.t=t;best.hit=true;best.matId=mid;
+            best.p=ray.o+ray.d*t;
+            float e=1e-4;
+            best.n=normalize(vec3(sdfCapsule(best.p+vec3(e,0,0),a,b,r)-sdfCapsule(best.p-vec3(e,0,0),a,b,r),
+                                  sdfCapsule(best.p+vec3(0,e,0),a,b,r)-sdfCapsule(best.p-vec3(0,e,0),a,b,r),
+                                  sdfCapsule(best.p+vec3(0,0,e),a,b,r)-sdfCapsule(best.p-vec3(0,0,e),a,b,r)));
+            best.sphereIdx=-1;best.tu=0;best.tv=0;} break;} t+=d;}
+}
+void rmCylinder(Ray ray, GPUCylinder o, inout Hit best) {
+    int mid=o.matId; vec3 c=o.centerR.xyz,ax=o.axisH.xyz; float r=o.centerR.w,h=o.axisH.w;
+    float t=1e-3;
+    for(int i=0;i<256&&t<1e4;i++){
+        float d=sdfCylinder(ray.o+ray.d*t,c,ax,r,h);
+        if(d<1e-4){if(t<best.t){best.t=t;best.hit=true;best.matId=mid;
+            best.p=ray.o+ray.d*t;
+            float e=1e-4;
+            best.n=normalize(vec3(sdfCylinder(best.p+vec3(e,0,0),c,ax,r,h)-sdfCylinder(best.p-vec3(e,0,0),c,ax,r,h),
+                                  sdfCylinder(best.p+vec3(0,e,0),c,ax,r,h)-sdfCylinder(best.p-vec3(0,e,0),c,ax,r,h),
+                                  sdfCylinder(best.p+vec3(0,0,e),c,ax,r,h)-sdfCylinder(best.p-vec3(0,0,e),c,ax,r,h)));
+            best.sphereIdx=-1;best.tu=0;best.tv=0;} break;} t+=d;}
+}
+void rmRoundedBox(Ray ray, GPURoundedBox o, inout Hit best) {
+    int mid=o.matId; vec3 c=o.centerCR.xyz,h=o.halfExt.xyz; float cr=o.centerCR.w;
+    float t=1e-3;
+    for(int i=0;i<256&&t<1e4;i++){
+        float d=sdfRoundedBox(ray.o+ray.d*t,c,h,cr);
+        if(d<1e-4){if(t<best.t){best.t=t;best.hit=true;best.matId=mid;
+            best.p=ray.o+ray.d*t;
+            float e=1e-4;
+            best.n=normalize(vec3(sdfRoundedBox(best.p+vec3(e,0,0),c,h,cr)-sdfRoundedBox(best.p-vec3(e,0,0),c,h,cr),
+                                  sdfRoundedBox(best.p+vec3(0,e,0),c,h,cr)-sdfRoundedBox(best.p-vec3(0,e,0),c,h,cr),
+                                  sdfRoundedBox(best.p+vec3(0,0,e),c,h,cr)-sdfRoundedBox(best.p-vec3(0,0,e),c,h,cr)));
+            best.sphereIdx=-1;best.tu=0;best.tv=0;} break;} t+=d;}
+}
+
+Hit sceneIntersect(Ray ray) {
+    Hit best=noHit();
+    traverseBVH(ray,best);
+    for(int i=0;i<uNumSpheres;i++) {
+        float t;
+        if(intersectSphere(ray,spheres[i].cr.xyz,spheres[i].cr.w,t)&&t<best.t) {
+            best.t=t; best.hit=true; best.matId=spheres[i].matId;
+            best.p=ray.o+ray.d*t;
+            best.n=normalize(best.p-spheres[i].cr.xyz);
+            best.sphereIdx=i; best.tu=0; best.tv=0;
+        }
+    }
+    for(int i=0;i<uNumPlanes;i++) {
+        vec3  n   = planes[i].normalOffset.xyz;
+        float off = planes[i].normalOffset.w;
+        float den = dot(ray.d, n);
+        if(abs(den) < 1e-6) continue;
+        float t = (off - dot(ray.o, n)) / den;
+        if(t < 1e-4 || t >= best.t) continue;
+        best.t=t; best.hit=true; best.matId=planes[i].matId;
+        best.p=ray.o+ray.d*t;
+        best.n=den < 0.0 ? n : -n;
+        best.sphereIdx=-1; best.tu=best.p.x; best.tv=best.p.z;
+    }
+    for(int i=0;i<uNumTori;       i++) rmTorus     (ray, tori[i],        best);
+    for(int i=0;i<uNumBoxes;      i++) rmBox        (ray, boxes[i],       best);
+    for(int i=0;i<uNumCapsules;   i++) rmCapsule    (ray, capsules[i],    best);
+    for(int i=0;i<uNumCylinders;  i++) rmCylinder   (ray, cylinders[i],   best);
+    for(int i=0;i<uNumRoundedBoxes;i++) rmRoundedBox(ray, roundedBoxes[i],best);
+    return best;
+}
+
+// ---------------------------------------------------------------------------
+// Sky / helpers
+// ---------------------------------------------------------------------------
+vec3 sky(vec3 d){return mix(vec3(1.0),vec3(0.5,0.7,1.0),0.5*(d.y+1.0));}
+void makeONB(vec3 n, out vec3 tn, out vec3 bn){
+    vec3 up=abs(n.z)<0.999?vec3(0,0,1):vec3(0,1,0);
+    tn=normalize(cross(up,n)); bn=cross(n,tn);
+}
+vec3 cosineHemi(float u1,float u2){
+    float r=sqrt(u1),phi=2.0*PI*u2;
+    return vec3(r*cos(phi),r*sin(phi),sqrt(max(0.0,1.0-u1)));
+}
+vec3 sampleGGX(float a,float u1,float u2){
+    float phi=2.0*PI*u2,a2=a*a,ct2=(1.0-u1)/max(1.0+(a2-1.0)*u1,1e-6);
+    float ct=sqrt(max(0.0,ct2)),st=sqrt(max(0.0,1.0-ct2));
+    return vec3(st*cos(phi),st*sin(phi),ct);
+}
+vec3  reflV(vec3 v,vec3 n)      {return v-2.0*dot(v,n)*n;}
+vec3  schlick(float c,vec3 F0)  {return F0+(1.0-F0)*pow(1.0-c,5.0);}
+float D_GGX(float NoH,float a)  {float a2=a*a,d=NoH*NoH*(a2-1.0)+1.0;return a2/(PI*d*d);}
+float G1(float NdV,float a)     {float a2=a*a;return 2.0*NdV/(NdV+sqrt(a2+(1.0-a2)*NdV*NdV));}
+float G2(float l,float v,float a){return G1(l,a)*G1(v,a);}
+float misPow(float a,float b)   {float a2=a*a,b2=b*b;return a2/max(a2+b2,1e-10);}
+float coneConePdf(vec3 from,vec3 c,float r){
+    vec3 d=c-from; float d2=dot(d,d),r2=r*r;
+    if(d2<=r2) return 0.0;
+    return 1.0/(2.0*PI*(1.0-sqrt(max(0.0,1.0-r2/d2))));
+}
+vec3 sampleSphereCone(vec3 from,vec3 c,float r,out float pdf){
+    vec3 d=c-from; float d2=dot(d,d),r2=r*r;
+    if(d2<=r2){pdf=0.0;return vec3(0);}
+    float cosMax=sqrt(max(0.0,1.0-r2/d2));
+    float u1=rng(),u2=rng(),ct=1.0-u1*(1.0-cosMax);
+    float st=sqrt(max(0.0,1.0-ct*ct)),phi=2.0*PI*u2;
+    vec3 zd=normalize(d),tn,bn; makeONB(zd,tn,bn);
+    pdf=1.0/(2.0*PI*(1.0-cosMax));
+    return normalize(tn*(st*cos(phi))+bn*(st*sin(phi))+zd*ct);
+}
+bool refractV(vec3 v,vec3 n,float eta,out vec3 refr){
+    float ci=-dot(v,n),s2=eta*eta*(1.0-ci*ci);
+    if(s2>1.0) return false;
+    refr=eta*v+(eta*ci-sqrt(1.0-s2))*n; return true;
+}
+
+// Sample albedo: use texture if available, otherwise material colour
+vec3 sampleAlbedo(GPUMaterial mat, float tu, float tv) {
+    int ti = mat.albedoTex;
+    if (ti == -2) {
+        // Procedural checkerboard (tu/tv = world X/Z for planes)
+        float cx = floor(tu / 0.35);
+        float cz = floor(tv / 0.35);
+        float check = mod(cx + cz, 2.0);
+        return mix(mat.albedoM.xyz, vec3(0.04), check);
+    }
+    float s = mat.uvScale > 0.0 ? mat.uvScale : 1.0;
+    if (ti >= 0 && ti < uNumTextures) {
+        vec2 uv = vec2(fract(tu * s), fract(tv * s));
+        return texture(uTextures[ti], uv).rgb;
+    }
+    return mat.albedoM.xyz;
+}
+
+// ---------------------------------------------------------------------------
+// Path tracer
+// ---------------------------------------------------------------------------
+vec3 tracePath(Ray ray) {
+    vec3 L=vec3(0),beta=vec3(1);
+    vec3 prevP=vec3(0); float prevBPdf=0.0; bool prevSpec=true;
+
+    for(int depth=0;depth<24;depth++) {
+        Hit h=sceneIntersect(ray);
+        if(!h.hit){L+=beta*sky(ray.d);break;}
+
+        GPUMaterial mat=materials[h.matId];
+        vec3  albedo  = sampleAlbedo(mat, h.tu, h.tv);
+        float metal   = mat.albedoM.w;
+        vec3  emit    = mat.emitR.xyz;
+        float rough   = mat.emitR.w;
+        float ior     = mat.ior;
+        float trans   = mat.trans;
+        bool  isEmit  = any(greaterThan(emit,vec3(0)));
+
+        if(isEmit){
+            if(uUseNEE!=0&&uBRDFMode==1&&!prevSpec&&depth>0
+                    &&h.sphereIdx>=0&&uNumLights>0){
+                GPUSphere ls=spheres[h.sphereIdx];
+                float cp=coneConePdf(prevP,ls.cr.xyz,ls.cr.w);
+                float pN=cp/float(uNumLights);
+                float w=(pN>0.0)?misPow(prevBPdf,pN):1.0;
+                L+=beta*emit*w;
+            } else {L+=beta*emit;}
+            break;
+        }
+
+        vec3 wi,origBias=h.n*EPS; bool isGlass=false; float bpdf=0.0;
+
+        if(uBRDFMode==1){
+            if(trans>0.5){
+                isGlass=true;
+                bool entering=dot(ray.d,h.n)<0.0;
+                vec3 fn=entering?h.n:-h.n;
+                float eta=entering?(1.0/ior):ior;
+                float ci=-dot(ray.d,fn);
+                float r0=(1.0-ior)/(1.0+ior); r0*=r0;
+                float R=r0+(1.0-r0)*pow(1.0-ci,5.0);
+                vec3 refr;
+                bool canR=refractV(ray.d,fn,eta,refr);
+                if(!canR||rng()<R){wi=reflV(ray.d,fn);origBias=fn*EPS;}
+                else              {wi=normalize(refr);origBias=-fn*EPS;}
+                bpdf=1.0;
+            } else {
+                vec3  wo=-ray.d;
+                float NoV=max(dot(h.n,wo),1e-4);
+                float alpha=max(rough*rough,1e-4);
+                vec3  F0=mix(vec3(0.04),albedo,metal);
+                vec3  Fap=schlick(NoV,F0);
+                float pS=clamp((Fap.x+Fap.y+Fap.z)/3.0,0.05,0.95);
+
+                if(uUseNEE!=0&&uNumLights>0){
+                    int sel=min(int(rng()*float(uNumLights)),uNumLights-1);
+                    int si=lights[sel];
+                    GPUSphere  ls=spheres[si];
+                    GPUMaterial lm=materials[ls.matId];
+                    float cp=coneConePdf(h.p,ls.cr.xyz,ls.cr.w);
+                    if(cp>0.0){
+                        float dp; vec3 ld=sampleSphereCone(h.p,ls.cr.xyz,ls.cr.w,dp);
+                        float NoL_n=dot(h.n,ld);
+                        if(NoL_n>0.0&&dp>0.0){
+                            Ray sr; sr.o=h.p+h.n*EPS; sr.d=ld;
+                            Hit sh=sceneIntersect(sr);
+                            if(!sh.hit||sh.sphereIdx==si){
+                                float pN=dp/float(uNumLights);
+                                vec3 wh_n=normalize(wo+ld);
+                                float NoH_n=max(dot(h.n,wh_n),1e-4);
+                                float VoH_n=max(dot(wo,wh_n),1e-4);
+                                float NoLn=max(NoL_n,1e-4);
+                                vec3  Fn=schlick(VoH_n,F0);
+                                float Dn=D_GGX(NoH_n,alpha);
+                                float Gn=G2(NoLn,NoV,alpha);
+                                vec3  sc=Fn*(Gn*Dn/(4.0*NoV));
+                                vec3  dc=albedo*(1.0-metal)*INV_PI*NoL_n;
+                                float pBn=pS*(Dn*NoH_n/(4.0*VoH_n))+(1.0-pS)*(NoLn*INV_PI);
+                                L+=beta*(pS*sc+(1.0-pS)*dc)*lm.emitR.xyz/pN*misPow(pN,pBn);
+                            }
+                        }
+                    }
+                }
+
+                vec3 tn,bn; makeONB(h.n,tn,bn);
+                if(rng()<pS){
+                    vec3 hl=sampleGGX(alpha,rng(),rng());
+                    vec3 wh=normalize(tn*hl.x+bn*hl.y+h.n*hl.z);
+                    wi=reflV(ray.d,wh);
+                    float NoL=dot(h.n,wi); if(NoL<=0.0) break;
+                    float VoH=max(dot(wo,wh),1e-4),NoH=max(dot(h.n,wh),1e-4);
+                    NoL=max(NoL,1e-4);
+                    vec3 F=schlick(VoH,F0); float G=G2(NoL,NoV,alpha);
+                    beta*=F*(G*VoH/(NoV*NoH))/pS;
+                    float Ds=D_GGX(NoH,alpha);
+                    bpdf=pS*(Ds*NoH/(4.0*VoH))+(1.0-pS)*(NoL*INV_PI);
+                } else {
+                    vec3 lc=cosineHemi(rng(),rng());
+                    wi=normalize(tn*lc.x+bn*lc.y+h.n*lc.z);
+                    beta*=albedo*(1.0-metal)/(1.0-pS);
+                    float NoL_d=max(dot(h.n,wi),1e-4);
+                    vec3 wh_d=normalize(wo+wi);
+                    float NoH_d=max(dot(h.n,wh_d),1e-4),VoH_d=max(dot(wo,wh_d),1e-4);
+                    float Dd=D_GGX(NoH_d,alpha);
+                    bpdf=pS*(Dd*NoH_d/(4.0*VoH_d))+(1.0-pS)*(NoL_d*INV_PI);
+                }
+            }
+        } else {
+            vec3 tn,bn; makeONB(h.n,tn,bn);
+            vec3 lc=cosineHemi(rng(),rng());
+            wi=normalize(tn*lc.x+bn*lc.y+h.n*lc.z);
+            beta*=albedo;
+            bpdf=max(dot(h.n,wi),1e-4)*INV_PI;
+        }
+
+        if(!isGlass&&depth>=3){
+            float p=clamp(max(beta.x,max(beta.y,beta.z)),0.05,0.95);
+            if(rng()>p) break; beta*=1.0/p;
+        }
+
+        prevP=h.p; prevBPdf=bpdf; prevSpec=isGlass||(uBRDFMode!=1);
+        ray.o=h.p+origBias; ray.d=wi;
+    }
+
+    if(any(isnan(L))||any(isinf(L))||any(lessThan(L,vec3(0)))) return vec3(0);
+    return L;
+}
+
+// ---------------------------------------------------------------------------
+// Main
+// ---------------------------------------------------------------------------
+void main() {
+    ivec2 px=ivec2(gl_GlobalInvocationID.xy);
+    if(any(greaterThanEqual(px,uSize))) return;
+
+    seedRNG(uint(px.x),uint(px.y),uint(uSampleCount));
+    float du=rng(),dv=rng();
+    float nx=(2.0*(float(px.x)+du)/float(uSize.x)-1.0)*uCamAspect*uCamScale;
+    float ny=(1.0-2.0*(float(px.y)+dv)/float(uSize.y))*uCamScale;
+
+    Ray ray; ray.o=uCamPos; ray.d=normalize(uCamFwd+uCamRight*nx+uCamUp*ny);
+    vec3 s=tracePath(ray);
+    imageStore(uAccumImage,px,imageLoad(uAccumImage,px)+vec4(s,0.0));
+}

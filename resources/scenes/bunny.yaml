@@ -2,23 +2,28 @@ scene:
   name: "Bunny"
 
   camera:
-    position: [0.0, 0.15, 0.40]
-    target:   [0.0, 0.10, 0.0]
+    position: [0.0, 0.6, 2.5]
+    target:   [0.0, 0.5, 0.0]
     fov: 45.0
 
   materials:
     - name: white
-      albedo:   [0.82, 0.82, 0.82]
+      albedo:       [0.6, 0.85, 1.0]
+      transmission: 1.0
+      ior:          1.5
 
     - name: ground
-      albedo:   [0.45, 0.55, 0.45]
+      roughness: 0.8
+      texture:  "resources/checker-map_tho.png"
+      uv_scale: 1.0
 
   objects:
     - type: obj
       file: "resources/objs/bunny.obj"
       material: white
+      scale: 3.0
 
-    - type: sphere   # ground plane
-      center: [0.0, -100.0, 0.0]
-      radius: 100.0
+    - type: plane
+      normal: [0, 1, 0]
+      offset: 0.0
       material: ground
