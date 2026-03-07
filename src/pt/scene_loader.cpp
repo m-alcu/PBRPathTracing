@@ -1,5 +1,6 @@
 #include "scene_loader.hpp"
-#include <yaml-cpp/yaml.h>
+#define TINY_YAML_IMPLEMENTATION
+#include "vendor/tiny_yaml/tiny_yaml.hpp"
 #include "vendor/tinyobjloader/tiny_obj_loader.h"
 #include "../texture.hpp"
 #include <filesystem>
