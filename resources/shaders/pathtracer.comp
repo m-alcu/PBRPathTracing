@@ -324,7 +324,7 @@ Hit sceneIntersect(Ray ray) {
         best.t=t; best.hit=true; best.matId=planes[i].matId;
         best.p=ray.o+ray.d*t;
         best.n=den < 0.0 ? n : -n;
-        best.sphereIdx=-1; best.tu=0; best.tv=0;
+        best.sphereIdx=-1; best.tu=best.p.x; best.tv=best.p.z;
     }
     for(int i=0;i<uNumTori;       i++) rmTorus     (ray, tori[i],        best);
     for(int i=0;i<uNumBoxes;      i++) rmBox        (ray, boxes[i],       best);
@@ -381,6 +381,13 @@ bool refractV(vec3 v,vec3 n,float eta,out vec3 refr){
 // Sample albedo: use texture if available, otherwise material colour
 vec3 sampleAlbedo(GPUMaterial mat, float tu, float tv) {
     int ti = mat.albedoTex;
+    if (ti == -2) {
+        // Procedural checkerboard (tu/tv = world X/Z for planes)
+        float cx = floor(tu / 0.35);
+        float cz = floor(tv / 0.35);
+        float check = mod(cx + cz, 2.0);
+        return mix(mat.albedoM.xyz, vec3(0.04), check);
+    }
     if (ti >= 0 && ti < uNumTextures) {
         // CPU loader already flipped V (1-v); just wrap with fract for repeat
         vec2 uv = vec2(fract(tu), fract(tv));

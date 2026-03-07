@@ -26,6 +26,7 @@ static Material parseMaterial(const YAML::Node& node) {
     if (node["roughness"])    m.roughness    = node["roughness"].as<float>();
     if (node["ior"])          m.ior          = node["ior"].as<float>();
     if (node["transmission"]) m.transmission = node["transmission"].as<float>();
+    if (node["checker"] && node["checker"].as<bool>()) m.albedoTex = -2;
     return m;
 }
 
