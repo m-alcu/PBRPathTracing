@@ -2,9 +2,9 @@ scene:
   name: "Bunny"
 
   camera:
-    position: [0.0, 0.15, 0.40]
-    target:   [0.0, 0.10, 0.0]
-    fov: 45.0
+    position: [1.1, 0.9, 0.0]
+    target:   [0.0, 0.0, 0.0]
+    fov: 50.0
 
   materials:
     - name: white
@@ -15,7 +15,7 @@ scene:
     - name: ground
       roughness: 0.8
       texture:  "resources/checker-map_tho.png"
-      uv_scale: 6.0
+      uv_scale: 2.0
 
   objects:
     - type: obj
