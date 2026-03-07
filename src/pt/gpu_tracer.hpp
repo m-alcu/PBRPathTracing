@@ -439,7 +439,7 @@ public:
             glUniform1i(loc(name), 1 + i);
         }
 
-        glDispatchCompute((W + 7) / 8, (H + 7) / 8, 1);
+        glDispatchCompute((W + 15) / 16, (H + 15) / 16, 1);
         glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT | GL_TEXTURE_FETCH_BARRIER_BIT);
     }
 
