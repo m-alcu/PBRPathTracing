@@ -10,15 +10,20 @@ set(CMAKE_POLICY_VERSION_MINIMUM 3.5)
 # Dependencies
 # ---------------------------------------------------------------------------
 
-# SDL3
+# GLFW
 FetchContent_Declare(
-    SDL3
-    GIT_REPOSITORY https://github.com/libsdl-org/SDL.git
-    GIT_TAG release-3.4.0
-    GIT_SHALLOW FALSE
+    glfw
+    GIT_REPOSITORY https://github.com/glfw/glfw.git
+    GIT_TAG 3.4
+    GIT_SHALLOW TRUE
 )
-FetchContent_MakeAvailable(SDL3)
+set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
+set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+FetchContent_MakeAvailable(glfw)
 
+# OpenGL
+find_package(OpenGL REQUIRED)
 
 # ---------------------------------------------------------------------------
 # Main executable – PBR Path Tracer
@@ -32,8 +37,8 @@ set(PT_SOURCES
     src/vendor/imgui/imgui_draw.cpp
     src/vendor/imgui/imgui_tables.cpp
     src/vendor/imgui/imgui_widgets.cpp
-    src/vendor/imgui/imgui_impl_sdl3.cpp
-    src/vendor/imgui/imgui_impl_sdlrenderer3.cpp
+    src/vendor/imgui/imgui_impl_glfw.cpp
+    src/vendor/imgui/imgui_impl_opengl3.cpp
     # stb_image (header-only impl unit)
     src/vendor/nothings/stb_image.cpp
     # tinyobjloader
@@ -44,8 +49,13 @@ add_executable(${PROJECT_NAME} ${PT_SOURCES})
 
 target_include_directories(${PROJECT_NAME} PRIVATE ${CMAKE_SOURCE_DIR}/src)
 
+target_compile_definitions(${PROJECT_NAME} PRIVATE
+    IMGUI_IMPL_OPENGL_LOADER_CUSTOM
+)
+
 target_link_libraries(${PROJECT_NAME} PRIVATE
-    SDL3::SDL3
+    glfw
+    OpenGL::GL
 )
 
 target_compile_options(${PROJECT_NAME} PRIVATE
