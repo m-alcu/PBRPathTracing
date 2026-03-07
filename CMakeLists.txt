@@ -81,4 +81,12 @@ if(BUILD_TESTS)
     target_include_directories(test_math PRIVATE ${CMAKE_SOURCE_DIR}/src)
     set_target_properties(test_math PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
     add_test(NAME test_math COMMAND test_math)
+
+    add_executable(test_pt
+        tests/test_pt.cpp
+        src/vendor/nothings/stb_image.cpp
+    )
+    target_include_directories(test_pt PRIVATE ${CMAKE_SOURCE_DIR}/src)
+    set_target_properties(test_pt PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
+    add_test(NAME test_pt COMMAND test_pt)
 endif()
