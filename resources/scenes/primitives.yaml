@@ -9,7 +9,10 @@ scene:
       albedo:   [1.0, 1.0, 1.0]
       emission: [12.0, 10.0, 8.0]
     - name: floor
-      albedo:   [0.75, 0.75, 0.75]
+      albedo:        [0.1, 0.1, 0.1]
+      checker:       true
+      checker_scale: 2.0
+      checker_color2: [0.9, 0.9, 0.9]
     - name: red_metal
       albedo:   [0.9, 0.2, 0.1]
       metallic: 1.0

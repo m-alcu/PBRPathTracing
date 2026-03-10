@@ -34,7 +34,10 @@ scene:
 
     # --- Ground and light ---
     - name: ground
-      albedo: [0.55, 0.55, 0.55]
+      albedo:        [0.1, 0.1, 0.1]
+      checker:       true
+      checker_scale: 2.0
+      checker_color2: [0.9, 0.9, 0.9]
 
     - name: light
       albedo:    [0.0, 0.0, 0.0]

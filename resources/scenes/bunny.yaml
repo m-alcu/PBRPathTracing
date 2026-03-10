@@ -7,8 +7,8 @@ scene:
     fov: 45.0
 
   materials:
-    - name: white
-      albedo:   [0.82, 0.82, 0.82]
+    - name: blue
+      albedo:   [0.4, 0.75, 0.85]
 
     - name: ground
       albedo:        [0.1, 0.1, 0.1]
@@ -19,7 +19,7 @@ scene:
   objects:
     - type: obj
       file: "resources/objs/bunny.obj"
-      material: white
+      material: blue
 
     - type: sphere   # ground plane
       center: [0.0, -100.0, 0.0]
