@@ -11,6 +11,30 @@ static constexpr float kPi    = 3.14159265f;
 static constexpr float kInvPi = 0.31830988618f;
 
 // ---------------------------------------------------------------------------
+// Analytical anti-aliased checkerboard (Inigo Quilez's checkersGradBox)
+// ---------------------------------------------------------------------------
+
+// GLSL-style fract: always in [0, 1)
+inline float glslFract(float x) { return x - std::floor(x); }
+
+// Box-filtered 1-D checker integral over footprint w centred at p.
+// Result in [-1, 1]; multiply two axes and scale to get [0, 1].
+inline float checkerI(float p, float w) {
+    float a = glslFract((p - 0.5f * w) * 0.5f) - 0.5f;
+    float b = glslFract((p + 0.5f * w) * 0.5f) - 0.5f;
+    return 2.0f * (std::fabs(a) - std::fabs(b)) / w;
+}
+
+// 2-D analytically box-filtered XOR checkerboard.
+// px, pz: position in checker space.  wx, wz: L1 filter footprint.
+// Returns blend factor in [0, 1] (0 = color A, 1 = color B).
+inline float checkersGradBox(float px, float pz, float wx, float wz) {
+    wx = std::max(wx, 1e-5f);
+    wz = std::max(wz, 1e-5f);
+    return 0.5f - 0.5f * checkerI(px, wx) * checkerI(pz, wz);
+}
+
+// ---------------------------------------------------------------------------
 // Sky / environment
 // ---------------------------------------------------------------------------
 
@@ -168,7 +192,8 @@ inline Vec3 tracePath(Ray ray, RNG& rng,
                       const std::vector<Material>& mats,
                       const PBRScene& scene,
                       BRDFMode brdfMode = BRDFMode::GGX,
-                      bool useNEE = true)
+                      bool useNEE = true,
+                      float pixelConeAngle = 0.002f)
 {
     Vec3 L{0.0f, 0.0f, 0.0f};
     Vec3 beta{1.0f, 1.0f, 1.0f};
@@ -221,6 +246,16 @@ inline Vec3 tracePath(Ray ray, RNG& rng,
             float r, g, b;
             scene.textures[m.albedoTex].sample(h.tu, h.tv, r, g, b);
             albedo = Vec3{r, g, b} * (1.0f / 255.0f);
+        }
+
+        // Analytical anti-aliased checkerboard (overrides albedo when enabled)
+        if (m.checker) {
+            // Estimate pixel footprint at hit: cone radius projected onto surface
+            float denom  = std::max(std::fabs(dot(ray.d, h.n)), 0.05f);
+            float fw     = h.t * pixelConeAngle / denom * m.checkerScale;
+            float blend  = checkersGradBox(h.p.x * m.checkerScale,
+                                           h.p.z * m.checkerScale, fw, fw);
+            albedo = m.albedo * (1.0f - blend) + m.checkerAlbedo2 * blend;
         }
 
         Vec3  wi;

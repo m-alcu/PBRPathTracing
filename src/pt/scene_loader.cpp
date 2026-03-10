@@ -20,12 +20,15 @@ static Vec3 parseVec3(const YAML::Node& n) {
 
 static Material parseMaterial(const YAML::Node& node) {
     Material m;
-    if (node["albedo"])       m.albedo       = parseVec3(node["albedo"]);
-    if (node["emission"])     m.emission     = parseVec3(node["emission"]);
-    if (node["metallic"])     m.metallic     = node["metallic"].as<float>();
-    if (node["roughness"])    m.roughness    = node["roughness"].as<float>();
-    if (node["ior"])          m.ior          = node["ior"].as<float>();
-    if (node["transmission"]) m.transmission = node["transmission"].as<float>();
+    if (node["albedo"])         m.albedo         = parseVec3(node["albedo"]);
+    if (node["emission"])       m.emission       = parseVec3(node["emission"]);
+    if (node["metallic"])       m.metallic       = node["metallic"].as<float>();
+    if (node["roughness"])      m.roughness      = node["roughness"].as<float>();
+    if (node["ior"])            m.ior            = node["ior"].as<float>();
+    if (node["transmission"])   m.transmission   = node["transmission"].as<float>();
+    if (node["checker"])        m.checker        = node["checker"].as<bool>();
+    if (node["checker_scale"])  m.checkerScale   = node["checker_scale"].as<float>();
+    if (node["checker_color2"]) m.checkerAlbedo2 = parseVec3(node["checker_color2"]);
     return m;
 }
 
@@ -177,7 +180,13 @@ std::unique_ptr<PBRScene> loadFromFile(const std::string& yamlPath) {
         for (const auto& mn : sn["materials"]) {
             int idx = (int)scene->materials.size();
             if (mn["name"]) matIndex[mn["name"].as<std::string>()] = idx;
-            scene->materials.push_back(parseMaterial(mn));
+            Material mat = parseMaterial(mn);
+            if (mat.checker)
+                std::fprintf(stdout, "[scene_loader] material[%d] '%s': checker=true scale=%.2f\n",
+                             idx,
+                             mn["name"] ? mn["name"].as<std::string>().c_str() : "?",
+                             mat.checkerScale);
+            scene->materials.push_back(mat);
         }
     }
     if (scene->materials.empty())

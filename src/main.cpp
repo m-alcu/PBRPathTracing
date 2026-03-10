@@ -248,6 +248,10 @@ int main(int, char**) {
         // ---- Render one pass (1 SPP, multi-threaded row-striping) ------
         sampleCount++;
         {
+            // Pixel cone half-angle (rad/pixel) — used for AA checkerboard footprint
+            float fovRad = scene->camera.fov * (kPi / 180.0f);
+            float pixelConeAngle = std::tan(fovRad * 0.5f) * 2.0f / (float)H;
+
             const int rowsPerThread = (H + nThreads - 1) / nThreads;
             std::vector<std::thread> threads;
             threads.reserve(nThreads);
@@ -265,7 +269,7 @@ int main(int, char**) {
                                 HashRNG rng(seed);
                                 Ray ray = scene->camera.generateRay(
                                     px, py, W, H, rng.nextFloat(), rng.nextFloat());
-                                accum[py * W + px] += tracePath(ray, rng, scene->materials, *scene, brdfMode, useNEE);
+                                accum[py * W + px] += tracePath(ray, rng, scene->materials, *scene, brdfMode, useNEE, pixelConeAngle);
                             } else {
                                 uint64_t seed =
                                     (uint64_t)((py * W + px) * 1099511628211ull
@@ -273,7 +277,7 @@ int main(int, char**) {
                                 RNG rng(seed);
                                 Ray ray = scene->camera.generateRay(
                                     px, py, W, H, rng.nextFloat(), rng.nextFloat());
-                                accum[py * W + px] += tracePath(ray, rng, scene->materials, *scene, brdfMode, useNEE);
+                                accum[py * W + px] += tracePath(ray, rng, scene->materials, *scene, brdfMode, useNEE, pixelConeAngle);
                             }
                         }
                     }
