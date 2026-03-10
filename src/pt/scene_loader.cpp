@@ -26,8 +26,6 @@ static Material parseMaterial(const YAML::Node& node) {
     if (node["roughness"])    m.roughness    = node["roughness"].as<float>();
     if (node["ior"])          m.ior          = node["ior"].as<float>();
     if (node["transmission"]) m.transmission = node["transmission"].as<float>();
-    if (node["uv_scale"])     m.uvScale      = node["uv_scale"].as<float>();
-    if (node["checker"] && node["checker"].as<bool>()) m.albedoTex = -2;
     return m;
 }
 
@@ -41,8 +39,7 @@ static void loadObj(const std::string& filename, int fallbackMatId,
                     std::vector<Material>* outMaterials = nullptr,
                     std::vector<Texture>*  outTextures  = nullptr,
                     std::unordered_map<std::string, int>* texCache = nullptr,
-                    bool useMtl = false,
-                    float scale = 1.0f) {
+                    bool useMtl = false) {
     namespace fs = std::filesystem;
 
     tinyobj::ObjReaderConfig cfg;
@@ -119,9 +116,9 @@ static void loadObj(const std::string& filename, int fallbackMatId,
             for (int v = 0; v < 3; v++) {
                 tinyobj::index_t idx = shape.mesh.indices[idxOff + v];
                 tri.v[v] = {
-                    attrib.vertices[3 * idx.vertex_index + 0] * scale,
-                    attrib.vertices[3 * idx.vertex_index + 1] * scale,
-                    attrib.vertices[3 * idx.vertex_index + 2] * scale
+                    attrib.vertices[3 * idx.vertex_index + 0],
+                    attrib.vertices[3 * idx.vertex_index + 1],
+                    attrib.vertices[3 * idx.vertex_index + 2]
                 };
                 if (idx.normal_index >= 0) {
                     tri.n[v] = {
@@ -180,23 +177,7 @@ std::unique_ptr<PBRScene> loadFromFile(const std::string& yamlPath) {
         for (const auto& mn : sn["materials"]) {
             int idx = (int)scene->materials.size();
             if (mn["name"]) matIndex[mn["name"].as<std::string>()] = idx;
-            Material mat = parseMaterial(mn);
-            if (mn["texture"]) {
-                std::string texPath = mn["texture"].as<std::string>();
-                auto it = texCache.find(texPath);
-                if (it != texCache.end()) {
-                    mat.albedoTex = it->second;
-                } else {
-                    Texture tex = Texture::loadFromFile(texPath);
-                    if (tex.isValid()) {
-                        int texIdx = (int)scene->textures.size();
-                        scene->textures.push_back(std::move(tex));
-                        texCache[texPath] = texIdx;
-                        mat.albedoTex = texIdx;
-                    }
-                }
-            }
-            scene->materials.push_back(mat);
+            scene->materials.push_back(parseMaterial(mn));
         }
     }
     if (scene->materials.empty())
@@ -228,9 +209,8 @@ std::unique_ptr<PBRScene> loadFromFile(const std::string& yamlPath) {
             if (type == "obj") {
                 std::string file = on["file"].as<std::string>();
                 bool useMtl = on["use_obj_materials"] && on["use_obj_materials"].as<bool>();
-                float scale = on["scale"] ? on["scale"].as<float>() : 1.0f;
                 loadObj(file, matId, scene->triangles, &scene->materials,
-                        &scene->textures, &texCache, useMtl, scale);
+                        &scene->textures, &texCache, useMtl);
 
             } else if (type == "sphere") {
                 Sphere sph;

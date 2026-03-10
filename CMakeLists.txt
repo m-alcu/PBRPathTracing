@@ -70,6 +70,15 @@ option(BUILD_TESTS "Build unit tests" ON)
 if(BUILD_TESTS)
     enable_testing()
 
+    add_executable(test_math
+        tests/test_math.cpp
+        src/slib.cpp
+        src/smath.cpp
+    )
+    target_include_directories(test_math PRIVATE ${CMAKE_SOURCE_DIR}/src)
+    set_target_properties(test_math PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
+    add_test(NAME test_math COMMAND test_math)
+
     add_executable(test_pt
         tests/test_pt.cpp
         src/vendor/nothings/stb_image.cpp

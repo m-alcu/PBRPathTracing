@@ -1,0 +1,182 @@
+scene:
+  name: "Glass Dragon"
+
+  camera:
+    position: [0.0, 0.28, 1.4]
+    target:   [-0.015, 0.07, 0.03]
+    fov: 42.0
+
+  materials:
+    - name: glass
+      transmission: 1.0
+      ior: 1.5
+
+    - name: ground
+      albedo: [0.72, 0.72, 0.72]
+
+    - name: back_wall
+      albedo: [0.88, 0.88, 0.88]
+
+    - name: red
+      albedo: [0.90, 0.08, 0.05]
+
+    - name: blue
+      albedo: [0.05, 0.20, 0.95]
+
+    - name: green
+      albedo: [0.05, 0.85, 0.10]
+
+    - name: yellow
+      albedo: [0.95, 0.85, 0.02]
+
+    - name: purple
+      albedo: [0.65, 0.05, 0.90]
+
+    - name: orange
+      albedo: [0.95, 0.45, 0.02]
+
+    - name: cyan
+      albedo: [0.02, 0.80, 0.85]
+
+    - name: pink
+      albedo: [0.95, 0.30, 0.55]
+
+    - name: gold
+      albedo:   [1.00, 0.78, 0.07]
+      metallic: 1.0
+      roughness: 0.05
+
+    - name: mirror
+      albedo:   [0.92, 0.92, 0.92]
+      metallic: 1.0
+      roughness: 0.0
+
+    - name: copper
+      albedo:   [0.95, 0.64, 0.54]
+      metallic: 1.0
+      roughness: 0.18
+
+    - name: light
+      albedo:   [0.0, 0.0, 0.0]
+      emission: [22.0, 20.0, 16.0]
+
+    - name: light_warm
+      albedo:   [0.0, 0.0, 0.0]
+      emission: [18.0, 10.0, 4.0]
+
+    - name: light_cool
+      albedo:   [0.0, 0.0, 0.0]
+      emission: [4.0, 10.0, 22.0]
+
+  objects:
+    # Glass dragon
+    - type: obj
+      file: "resources/objs/dragon.obj"
+      material: glass
+
+    # Ground plane (top at y = -0.283)
+    - type: sphere
+      center: [0.0, -100.283, 0.0]
+      radius: 100.0
+      material: ground
+
+    # Back wall (front at z = -2.8)
+    - type: sphere
+      center: [0.0, 0.0, -102.8]
+      radius: 100.0
+      material: back_wall
+
+    # --- Background spheres (z = -1.0 to -1.2, seen through glass) ---
+    - type: sphere
+      center: [-0.32, 0.22, -1.05]
+      radius: 0.17
+      material: red
+
+    - type: sphere
+      center: [ 0.08, 0.32, -1.10]
+      radius: 0.15
+      material: blue
+
+    - type: sphere
+      center: [ 0.30, 0.06, -1.05]
+      radius: 0.17
+      material: green
+
+    - type: sphere
+      center: [-0.10, -0.04, -1.10]
+      radius: 0.15
+      material: yellow
+
+    - type: sphere
+      center: [ 0.18, 0.42, -1.15]
+      radius: 0.12
+      material: purple
+
+    - type: sphere
+      center: [-0.22, 0.42, -1.15]
+      radius: 0.12
+      material: orange
+
+    - type: sphere
+      center: [ 0.0, -0.10, -1.12]
+      radius: 0.13
+      material: cyan
+
+    - type: sphere
+      center: [ 0.42, 0.28, -1.08]
+      radius: 0.14
+      material: pink
+
+    - type: sphere
+      center: [-0.42, 0.06, -1.08]
+      radius: 0.14
+      material: purple
+
+    # --- Foreground spheres beside and in front of the dragon ---
+    - type: sphere
+      center: [-0.55, -0.10, 0.10]
+      radius: 0.17
+      material: gold
+
+    - type: sphere
+      center: [ 0.52, -0.10, 0.10]
+      radius: 0.17
+      material: mirror
+
+    - type: sphere
+      center: [-0.50, -0.10, -0.25]
+      radius: 0.14
+      material: copper
+
+    - type: sphere
+      center: [ 0.48, -0.10, -0.25]
+      radius: 0.14
+      material: red
+
+    - type: sphere
+      center: [-0.38, 0.22, 0.25]
+      radius: 0.10
+      material: blue
+
+    - type: sphere
+      center: [ 0.38, 0.22, 0.25]
+      radius: 0.10
+      material: green
+
+    # --- Lights ---
+    # Main overhead (warm white)
+    - type: sphere
+      center: [ 0.0, 5.5, 1.5]
+      radius: 1.8
+      material: light
+
+    # Side fill lights to accent the dragon silhouette
+    - type: sphere
+      center: [-3.0, 3.0, 1.0]
+      radius: 0.8
+      material: light_warm
+
+    - type: sphere
+      center: [ 3.0, 3.0, 1.0]
+      radius: 0.8
+      material: light_cool
