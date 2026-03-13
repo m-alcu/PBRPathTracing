@@ -45,6 +45,47 @@ inline Vec3 sky(const Vec3& d) {
 }
 
 // ---------------------------------------------------------------------------
+// Ambient occlusion approximation (SDF march along surface normal)
+//
+// Marches 5 steps along the normal. At each step distance h, the SDF value d
+// should equal h if space is open. If d < h the surface curves back — the
+// shortfall (h-d) accumulates. An exponential weight sca *= 0.95 gives more
+// importance to closer occluders. Triangles have no SDF and are omitted.
+// ---------------------------------------------------------------------------
+
+inline float sceneSDF(Vec3 p, const PBRScene& scene) {
+    float d = 1e30f;
+    for (const auto& sph : scene.spheres)
+        d = std::min(d, sdfSphere(p, sph.center, sph.radius));
+    for (const auto& tor : scene.tori)
+        d = std::min(d, sdfTorus(p, tor.center, tor.axis, tor.majorR, tor.minorR));
+    for (const auto& box : scene.boxes)
+        d = std::min(d, sdfBox(p, box.center, box.half));
+    for (const auto& cap : scene.capsules)
+        d = std::min(d, sdfCapsule(p, cap.a, cap.b, cap.radius));
+    for (const auto& cyl : scene.cylinders)
+        d = std::min(d, sdfCylinder(p, cyl.center, cyl.axis, cyl.radius, cyl.halfHeight));
+    for (const auto& rb : scene.roundedBoxes)
+        d = std::min(d, sdfRoundedBox(p, rb.center, rb.half, rb.cornerRadius));
+    for (const auto& pl : scene.planes)
+        d = std::min(d, dot(p, pl.normal) - pl.offset);
+    return d;
+}
+
+inline float calcAO(Vec3 pos, Vec3 nor, const PBRScene& scene) {
+    float occ = 0.0f;
+    float sca = 1.0f;
+    for (int i = 0; i < 5; i++) {
+        float h = 0.01f + 0.12f * (float)i / 4.0f;
+        float d = sceneSDF(pos + nor * h, scene);
+        occ += (h - d) * sca;
+        sca *= 0.95f;
+        if (occ > 0.35f) break;
+    }
+    return std::clamp(1.0f - 3.0f * occ, 0.0f, 1.0f) * (0.5f + 0.5f * nor.y);
+}
+
+// ---------------------------------------------------------------------------
 // Sampling helpers
 // ---------------------------------------------------------------------------
 
@@ -186,6 +227,72 @@ inline Vec3 sampleSphereLight(const Vec3& from, const Sphere& sph,
 // ---------------------------------------------------------------------------
 
 enum class BRDFMode { Lambertian = 0, GGX = 1 };
+
+// ---------------------------------------------------------------------------
+// Direct shading render (no Monte Carlo — AO replaces indirect illumination)
+//
+// Mirrors IQ's analytical shading from SDL_Raymarch_SDF/main.cpp:
+//   4 light terms (sun, sky, back-fill, rim) with AO modulating the ambient
+//   terms.  One ray intersection + 2 shadow rays + 5 AO samples — O(1).
+// ---------------------------------------------------------------------------
+inline Vec3 renderDirect(const Ray& ray, const PBRScene& scene,
+                         const std::vector<Material>& mats)
+{
+    Hit h = scene.intersect(ray);
+    if (!h.hit) return sky(ray.d);
+
+    const Material& m = mats[h.matId];
+    if (m.emission.x > 0.0f || m.emission.y > 0.0f || m.emission.z > 0.0f)
+        return m.emission;
+
+    Vec3 albedo = m.albedo;
+    Vec3 nor    = h.n;
+    Vec3 rd     = ray.d;
+    Vec3 ref    = reflect(rd, nor);
+
+    float occ = calcAO(h.p, nor, scene);
+    Vec3  lin{0.0f, 0.0f, 0.0f};
+
+    // Light 1: Sun (directional, hard shadow)
+    {
+        const Vec3 lig = normalize(Vec3{-0.5f, 0.4f, -0.6f});
+        Vec3  hal = normalize(lig - rd);
+        float dif = std::clamp(dot(nor, lig), 0.0f, 1.0f);
+        Hit   sh  = scene.intersect(Ray{h.p + nor * 1e-4f, lig});
+        if (sh.hit) dif = 0.0f;
+        float spe = std::pow(std::clamp(dot(nor, hal), 0.0f, 1.0f), 16.0f) * dif;
+        spe *= 0.04f + 0.96f * std::pow(std::clamp(1.0f - dot(hal, lig), 0.0f, 1.0f), 5.0f);
+        lin += albedo * 2.2f * dif * Vec3{1.3f, 1.0f, 0.7f};
+        lin +=          5.0f * spe * Vec3{1.3f, 1.0f, 0.7f};
+    }
+
+    // Light 2: Sky ambient (AO-modulated) + sky specular off reflection
+    {
+        float dif = std::sqrt(std::clamp(0.5f + 0.5f * nor.y, 0.0f, 1.0f)) * occ;
+        float spe = std::clamp(0.5f + 0.5f * ref.y, 0.0f, 1.0f);
+        spe *= dif;
+        spe *= 0.04f + 0.96f * std::pow(std::clamp(1.0f + dot(nor, rd), 0.0f, 1.0f), 5.0f);
+        Hit rh = scene.intersect(Ray{h.p + nor * 1e-4f, ref});
+        if (rh.hit) spe = 0.0f;
+        lin += albedo * 0.6f * dif * Vec3{0.4f, 0.6f, 1.15f};
+        lin +=          2.0f * spe * Vec3{0.4f, 0.6f, 1.3f};
+    }
+
+    // Light 3: Back fill (simulates ground-bounce GI, attenuates with height)
+    {
+        float dif = std::clamp(dot(nor, normalize(Vec3{0.5f, 0.0f, 0.6f})), 0.0f, 1.0f)
+                  * std::clamp(1.0f - h.p.y, 0.0f, 1.0f) * occ;
+        lin += albedo * 0.55f * dif * Vec3{0.25f, 0.25f, 0.25f};
+    }
+
+    // Light 4: Rim / SSS (fakes translucent rim glow)
+    {
+        float rim = std::pow(1.0f + dot(nor, rd), 2.0f) * occ;
+        lin += albedo * 0.25f * rim * Vec3{1.0f, 1.0f, 1.0f};
+    }
+
+    return lin;
+}
 
 template<typename RNG>
 inline Vec3 tracePath(Ray ray, RNG& rng,

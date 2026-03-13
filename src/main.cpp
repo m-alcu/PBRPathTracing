@@ -238,6 +238,7 @@ int main(int, char**) {
     bool useHashRng = true;
     BRDFMode brdfMode = BRDFMode::GGX;
     bool useNEE = true;
+    bool useAO  = false;
 
     while (!glfwWindowShouldClose(window)) {
         glfwPollEvents();
@@ -269,7 +270,9 @@ int main(int, char**) {
                                 HashRNG rng(seed);
                                 Ray ray = scene->camera.generateRay(
                                     px, py, W, H, rng.nextFloat(), rng.nextFloat());
-                                accum[py * W + px] += tracePath(ray, rng, scene->materials, *scene, brdfMode, useNEE, pixelConeAngle);
+                                accum[py * W + px] += useAO
+                                        ? renderDirect(ray, *scene, scene->materials)
+                                        : tracePath(ray, rng, scene->materials, *scene, brdfMode, useNEE, pixelConeAngle);
                             } else {
                                 uint64_t seed =
                                     (uint64_t)((py * W + px) * 1099511628211ull
@@ -277,7 +280,9 @@ int main(int, char**) {
                                 RNG rng(seed);
                                 Ray ray = scene->camera.generateRay(
                                     px, py, W, H, rng.nextFloat(), rng.nextFloat());
-                                accum[py * W + px] += tracePath(ray, rng, scene->materials, *scene, brdfMode, useNEE, pixelConeAngle);
+                                accum[py * W + px] += useAO
+                                        ? renderDirect(ray, *scene, scene->materials)
+                                        : tracePath(ray, rng, scene->materials, *scene, brdfMode, useNEE, pixelConeAngle);
                             }
                         }
                     }
@@ -370,6 +375,13 @@ int main(int, char**) {
             bool prev = useNEE;
             ImGui::Checkbox("NEE (direct light sampling)", &useNEE);
             if (useNEE != prev) resetAccum();
+        }
+
+        ImGui::Separator();
+        {
+            bool prev = useAO;
+            ImGui::Checkbox("AO (SDF ambient occlusion approx)", &useAO);
+            if (useAO != prev) resetAccum();
         }
 
         ImGui::Separator();
