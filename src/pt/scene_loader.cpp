@@ -98,6 +98,37 @@ static void loadObj(const std::string& filename, int fallbackMatId,
         }
     }
 
+    // If the OBJ has no normals, pre-compute smooth vertex normals by
+    // accumulating face normals at each shared vertex and normalising.
+    // This gives Gouraud-quality smooth shading without any OBJ changes.
+    const bool hasObjNormals = !attrib.normals.empty();
+    std::vector<Vec3> smoothNormals;
+    if (!hasObjNormals) {
+        smoothNormals.assign(attrib.vertices.size() / 3, Vec3{});
+        for (const auto& shape : shapes) {
+            size_t idxOff = 0;
+            for (size_t f = 0; f < shape.mesh.num_face_vertices.size(); ++f) {
+                int fv = (int)shape.mesh.num_face_vertices[f];
+                if (fv != 3) { idxOff += fv; continue; }
+                int i0 = shape.mesh.indices[idxOff + 0].vertex_index;
+                int i1 = shape.mesh.indices[idxOff + 1].vertex_index;
+                int i2 = shape.mesh.indices[idxOff + 2].vertex_index;
+                Vec3 v0{attrib.vertices[3*i0], attrib.vertices[3*i0+1], attrib.vertices[3*i0+2]};
+                Vec3 v1{attrib.vertices[3*i1], attrib.vertices[3*i1+1], attrib.vertices[3*i1+2]};
+                Vec3 v2{attrib.vertices[3*i2], attrib.vertices[3*i2+1], attrib.vertices[3*i2+2]};
+                Vec3 fn = normalize(cross(v1 - v0, v2 - v0));
+                smoothNormals[i0] += fn;
+                smoothNormals[i1] += fn;
+                smoothNormals[i2] += fn;
+                idxOff += 3;
+            }
+        }
+        for (auto& n : smoothNormals) {
+            float len = length(n);
+            if (len > 1e-6f) n = n / len;
+        }
+    }
+
     for (const auto& shape : shapes) {
         size_t idxOff = 0;
         for (size_t f = 0; f < shape.mesh.num_face_vertices.size(); ++f) {
@@ -114,7 +145,6 @@ static void loadObj(const std::string& filename, int fallbackMatId,
 
             Triangle tri;
             tri.matId = triMatId;
-            bool hasNormals = true;
 
             for (int v = 0; v < 3; v++) {
                 tinyobj::index_t idx = shape.mesh.indices[idxOff + v];
@@ -123,28 +153,20 @@ static void loadObj(const std::string& filename, int fallbackMatId,
                     attrib.vertices[3 * idx.vertex_index + 1],
                     attrib.vertices[3 * idx.vertex_index + 2]
                 };
-                if (idx.normal_index >= 0) {
+                if (hasObjNormals && idx.normal_index >= 0) {
                     tri.n[v] = {
                         attrib.normals[3 * idx.normal_index + 0],
                         attrib.normals[3 * idx.normal_index + 1],
                         attrib.normals[3 * idx.normal_index + 2]
                     };
                 } else {
-                    hasNormals = false;
+                    tri.n[v] = smoothNormals[idx.vertex_index];
                 }
                 if (idx.texcoord_index >= 0) {
                     tri.uv[v][0] = attrib.texcoords[2 * idx.texcoord_index + 0];
                     // OBJ V=0 is bottom; stb_image V=0 is top → flip
                     tri.uv[v][1] = 1.0f - attrib.texcoords[2 * idx.texcoord_index + 1];
                 }
-            }
-
-            // Compute face normal if OBJ had none
-            if (!hasNormals) {
-                Vec3 e1 = tri.v[1] - tri.v[0];
-                Vec3 e2 = tri.v[2] - tri.v[0];
-                Vec3 n  = normalize(cross(e1, e2));
-                tri.n[0] = tri.n[1] = tri.n[2] = n;
             }
 
             tris.push_back(tri);
