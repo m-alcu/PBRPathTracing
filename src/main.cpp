@@ -271,7 +271,7 @@ int main(int, char**) {
                                 Ray ray = scene->camera.generateRay(
                                     px, py, W, H, rng.nextFloat(), rng.nextFloat());
                                 accum[py * W + px] += useAO
-                                        ? renderDirect(ray, *scene, scene->materials)
+                                        ? renderDirect(ray, *scene, scene->materials, pixelConeAngle)
                                         : tracePath(ray, rng, scene->materials, *scene, brdfMode, useNEE, pixelConeAngle);
                             } else {
                                 uint64_t seed =
@@ -281,7 +281,7 @@ int main(int, char**) {
                                 Ray ray = scene->camera.generateRay(
                                     px, py, W, H, rng.nextFloat(), rng.nextFloat());
                                 accum[py * W + px] += useAO
-                                        ? renderDirect(ray, *scene, scene->materials)
+                                        ? renderDirect(ray, *scene, scene->materials, pixelConeAngle)
                                         : tracePath(ray, rng, scene->materials, *scene, brdfMode, useNEE, pixelConeAngle);
                             }
                         }

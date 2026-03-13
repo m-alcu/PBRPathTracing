@@ -236,7 +236,8 @@ enum class BRDFMode { Lambertian = 0, GGX = 1 };
 //   terms.  One ray intersection + 2 shadow rays + 5 AO samples — O(1).
 // ---------------------------------------------------------------------------
 inline Vec3 renderDirect(const Ray& ray, const PBRScene& scene,
-                         const std::vector<Material>& mats)
+                         const std::vector<Material>& mats,
+                         float pixelConeAngle = 0.002f)
 {
     Hit h = scene.intersect(ray);
     if (!h.hit) return sky(ray.d);
@@ -245,7 +246,21 @@ inline Vec3 renderDirect(const Ray& ray, const PBRScene& scene,
     if (m.emission.x > 0.0f || m.emission.y > 0.0f || m.emission.z > 0.0f)
         return m.emission;
 
+    // Resolve albedo — mirrors tracePath logic
     Vec3 albedo = m.albedo;
+    if (m.albedoTex >= 0 && m.albedoTex < (int)scene.textures.size()) {
+        float r, g, b;
+        scene.textures[m.albedoTex].sample(h.tu, h.tv, r, g, b);
+        albedo = Vec3{r, g, b} * (1.0f / 255.0f);
+    }
+    if (m.checker) {
+        float denom = std::max(std::fabs(dot(ray.d, h.n)), 0.05f);
+        float fw    = h.t * pixelConeAngle / denom * m.checkerScale;
+        float blend = checkersGradBox(h.p.x * m.checkerScale,
+                                      h.p.z * m.checkerScale, fw, fw);
+        albedo = m.albedo * (1.0f - blend) + m.checkerAlbedo2 * blend;
+    }
+
     Vec3 nor    = h.n;
     Vec3 rd     = ray.d;
     Vec3 ref    = reflect(rd, nor);
