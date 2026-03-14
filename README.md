@@ -654,6 +654,164 @@ The accumulation buffer stores HDR linear radiance as `Vec3`. Each frame:
 
 ---
 
+### 19. Direct Lighting Mode (`renderDirect`)
+
+`renderDirect` is an alternative render branch (enabled with the **AO** toggle in the ImGui panel) that produces a fully deterministic image in a single sample using a hand-tuned four-light Blinn-Phong rig plus SDF-based ambient occlusion.  It has no path bounces and no Monte Carlo noise, making it useful for interactive scene setup.
+
+The final pixel colour is the sum of four independent light contributions:
+
+```math
+L = L_{\text{sun}} + L_{\text{sky}} + L_{\text{fill}} + L_{\text{rim}}
+```
+
+---
+
+#### Ambient Occlusion (SDF)
+
+Five sample points are lifted above the hit point $\mathbf{p}$ along the surface normal $\hat{\mathbf{n}}$ at distances $h_i$. The scene SDF $d_i$ is queried at each; a gap $h_i - d_i > 0$ means nearby geometry is blocking the sky:
+
+```math
+h_i = 0.01 + 0.12\,\frac{i}{4}, \qquad i = 0,\ldots,4
+```
+
+```math
+\text{occ} = \sum_{i=0}^{4} (h_i - d_i)\,s^i, \qquad s = 0.95
+```
+
+The exponential weight $s^i$ makes closer samples more significant. The final AO term applies a horizon darkening for downward-facing normals:
+
+```math
+\text{ao} = \mathrm{clamp}(1 - 3\,\text{occ},\;0,\;1)\;\cdot\;\left(\tfrac{1}{2} + \tfrac{1}{2}\,\hat{\mathbf{n}}_y\right)
+```
+
+---
+
+#### Light 1 — Sun (directional, hard shadow)
+
+The sun direction $\hat{\ell}$ is a unit vector that can be animated along an orbit at elevation $\phi$ and azimuth angle $\theta$:
+
+```math
+\hat{\ell} = \begin{pmatrix} \cos\theta\cos\phi \\ \sin\phi \\ \sin\theta\cos\phi \end{pmatrix}
+```
+
+The **Blinn-Phong halfway vector** between light and eye ($\mathbf{d}$ = ray direction):
+
+```math
+\mathbf{h} = \mathrm{normalize}(\hat{\ell} - \mathbf{d})
+```
+
+**Lambertian diffuse** (clamped, zeroed if shadow ray hits anything):
+
+```math
+k_d = \mathrm{clamp}(\hat{\mathbf{n}} \cdot \hat{\ell},\;0,\;1), \qquad k_d = 0 \text{ if occluded}
+```
+
+**Blinn-Phong specular** (power 16):
+
+```math
+k_s = \mathrm{clamp}(\hat{\mathbf{n}} \cdot \mathbf{h},\;0,\;1)^{16} \cdot k_d
+```
+
+**Schlick Fresnel** on the specular term:
+
+```math
+k_s \;\leftarrow\; k_s \cdot \left[0.04 + 0.96\,(1 - \mathbf{h}\cdot\hat{\ell})^5\right]
+```
+
+**Accumulation** (warm sun colour $\mathbf{c}_\odot = (1.3,\,1.0,\,0.7)$):
+
+```math
+L_{\text{sun}} = 2.2\;k_d\;\rho\otimes\mathbf{c}_\odot \;+\; 5.0\;k_s\;\mathbf{c}_\odot
+```
+
+---
+
+#### Light 2 — Sky (ambient + reflection specular)
+
+Sky ambient — how much of the upper hemisphere the surface faces, modulated by AO:
+
+```math
+k_d^{\text{sky}} = \sqrt{\,\mathrm{clamp}\!\left(\tfrac{1}{2}+\tfrac{1}{2}\hat{\mathbf{n}}_y,\;0,\;1\right)}\;\cdot\;\text{ao}
+```
+
+Sky specular — how much of the upper hemisphere the reflection ray $\mathbf{r} = \mathbf{d} - 2(\mathbf{d}\cdot\hat{\mathbf{n}})\hat{\mathbf{n}}$ faces:
+
+```math
+k_s^{\text{sky}} = \mathrm{clamp}\!\left(\tfrac{1}{2}+\tfrac{1}{2}\mathbf{r}_y,\;0,\;1\right) \cdot k_d^{\text{sky}}
+```
+
+**Schlick Fresnel** using the view angle (grazing = more reflective):
+
+```math
+k_s^{\text{sky}} \;\leftarrow\; k_s^{\text{sky}} \cdot \left[0.04 + 0.96\,(1 + \hat{\mathbf{n}}\cdot\mathbf{d})^5\right]
+```
+
+If the reflection ray hits any geometry, $k_s^{\text{sky}} = 0$ (sky blocked).
+
+**Accumulation** (sky colour $\mathbf{c}_{\text{sky}} = (0.4,\,0.6,\,1.15)$):
+
+```math
+L_{\text{sky}} = 0.6\;k_d^{\text{sky}}\;\rho\otimes\mathbf{c}_{\text{sky}} \;+\; 2.0\;k_s^{\text{sky}}\;\mathbf{c}_{\text{sky}}
+```
+
+---
+
+#### Light 3 — Back Fill (ground-bounce GI approximation)
+
+Simulates one indirect bounce from the floor. The fill direction $\hat{\ell}_b = \mathrm{normalize}(0.5,\,0,\,0.6)$ is the approximate opposite of the sun. Height attenuation $\max(1 - y,\,0)$ fades the contribution for objects high above the floor:
+
+```math
+k_d^{\text{fill}} = \mathrm{clamp}(\hat{\mathbf{n}}\cdot\hat{\ell}_b,\;0,\;1)\;\cdot\;\mathrm{clamp}(1-p_y,\;0,\;1)\;\cdot\;\text{ao}
+```
+
+**Accumulation** (neutral grey bounce $\mathbf{c}_b = (0.25,\,0.25,\,0.25)$):
+
+```math
+L_{\text{fill}} = 0.55\;k_d^{\text{fill}}\;\rho\otimes\mathbf{c}_b
+```
+
+---
+
+#### Light 4 — Rim / SSS
+
+A view-dependent term that brightens the silhouette, faking a rim backlight or subsurface scattering glow. It peaks where $\hat{\mathbf{n}}\cdot\mathbf{d} \approx 0$ (grazing angle):
+
+```math
+k_{\text{rim}} = (1 + \hat{\mathbf{n}}\cdot\mathbf{d})^2 \cdot \text{ao}
+```
+
+**Accumulation** (neutral white):
+
+```math
+L_{\text{rim}} = 0.25\;k_{\text{rim}}\;\rho
+```
+
+---
+
+#### Analytically Box-Filtered Checkerboard
+
+The checker albedo uses an analytic anti-aliasing technique to avoid Moiré at a distance. The 1-D filtered integral of the square-wave checker over a footprint of width $w$ centred at position $p$ is:
+
+```math
+F(p) = 2\left|\mathrm{fract}\!\left(\tfrac{p}{2}\right) - \tfrac{1}{2}\right|
+```
+
+```math
+\text{checkerI}(p,w) = \frac{2\,\bigl(|a| - |b|\bigr)}{w}, \quad a = \mathrm{fract}\!\left(\tfrac{p-w/2}{2}\right)-\tfrac{1}{2},\;\; b = \mathrm{fract}\!\left(\tfrac{p+w/2}{2}\right)-\tfrac{1}{2}
+```
+
+This is the **fundamental theorem of calculus** applied to $F$: the average of the square wave over $[p-w/2,\; p+w/2]$.  The 2-D blend factor is $\text{checkerI}(p_x, w_x) \times \text{checkerI}(p_z, w_z)$, rescaled to $[0,1]$.
+
+The filter footprint width is derived from the ray's travel distance $t$, the pixel cone half-angle $\psi$, and the grazing-angle correction $|\hat{\mathbf{n}}\cdot\mathbf{d}|$:
+
+```math
+w = \frac{t\,\psi}{\max(|\hat{\mathbf{n}}\cdot\mathbf{d}|,\;0.05)} \cdot s_{\text{checker}}
+```
+
+where $s_{\text{checker}}$ is the material's checker scale.
+
+---
+
 ## Project Structure
 
 ```
