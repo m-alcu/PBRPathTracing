@@ -255,7 +255,7 @@ int main(int, char**) {
             glfwSetWindowShouldClose(window, GLFW_TRUE);
 
         // ---- Sun orbit animation ----------------------------------------
-        if (sunOrbit) {
+        if (sunOrbit && useAO) {
             sunAngle += sunSpeed * io.DeltaTime;
             resetAccum();
         }
