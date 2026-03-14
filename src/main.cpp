@@ -237,8 +237,12 @@ int main(int, char**) {
     // ------------------------------------------------------------------
     bool useHashRng = true;
     BRDFMode brdfMode = BRDFMode::GGX;
-    bool useNEE = true;
-    bool useAO  = false;
+    bool useNEE      = true;
+    bool useAO       = false;
+    bool useSun      = true;
+    bool useSky      = true;
+    bool useBackFill = true;
+    bool useRim      = true;
 
     while (!glfwWindowShouldClose(window)) {
         glfwPollEvents();
@@ -271,7 +275,7 @@ int main(int, char**) {
                                 Ray ray = scene->camera.generateRay(
                                     px, py, W, H, rng.nextFloat(), rng.nextFloat());
                                 accum[py * W + px] += useAO
-                                        ? renderDirect(ray, *scene, scene->materials, pixelConeAngle)
+                                        ? renderDirect(ray, *scene, scene->materials, pixelConeAngle, useSun, useSky, useBackFill, useRim)
                                         : tracePath(ray, rng, scene->materials, *scene, brdfMode, useNEE, pixelConeAngle);
                             } else {
                                 uint64_t seed =
@@ -281,7 +285,7 @@ int main(int, char**) {
                                 Ray ray = scene->camera.generateRay(
                                     px, py, W, H, rng.nextFloat(), rng.nextFloat());
                                 accum[py * W + px] += useAO
-                                        ? renderDirect(ray, *scene, scene->materials, pixelConeAngle)
+                                        ? renderDirect(ray, *scene, scene->materials, pixelConeAngle, useSun, useSky, useBackFill, useRim)
                                         : tracePath(ray, rng, scene->materials, *scene, brdfMode, useNEE, pixelConeAngle);
                             }
                         }
@@ -382,6 +386,20 @@ int main(int, char**) {
             bool prev = useAO;
             ImGui::Checkbox("AO (SDF ambient occlusion approx)", &useAO);
             if (useAO != prev) resetAccum();
+        }
+
+        if (useAO) {
+            ImGui::Separator();
+            ImGui::TextDisabled("Direct lights (AO mode only):");
+            auto lightCheck = [&](const char* label, bool& flag) {
+                bool prev = flag;
+                ImGui::Checkbox(label, &flag);
+                if (flag != prev) resetAccum();
+            };
+            lightCheck("Sun",       useSun);
+            lightCheck("Sky",       useSky);
+            lightCheck("Back fill", useBackFill);
+            lightCheck("Rim",       useRim);
         }
 
         ImGui::Separator();

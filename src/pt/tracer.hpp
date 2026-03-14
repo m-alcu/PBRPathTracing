@@ -237,7 +237,9 @@ enum class BRDFMode { Lambertian = 0, GGX = 1 };
 // ---------------------------------------------------------------------------
 inline Vec3 renderDirect(const Ray& ray, const PBRScene& scene,
                          const std::vector<Material>& mats,
-                         float pixelConeAngle = 0.002f)
+                         float pixelConeAngle = 0.002f,
+                         bool useSun = true, bool useSky = true,
+                         bool useBackFill = true, bool useRim = true)
 {
     Hit h = scene.intersect(ray);
     if (!h.hit) return sky(ray.d);
@@ -269,7 +271,7 @@ inline Vec3 renderDirect(const Ray& ray, const PBRScene& scene,
     Vec3  lin{0.0f, 0.0f, 0.0f};
 
     // Light 1: Sun (directional, hard shadow)
-    {
+    if (useSun) {
         const Vec3 lig = normalize(Vec3{-0.5f, 0.4f, -0.6f});
         Vec3  hal = normalize(lig - rd);
         float dif = std::clamp(dot(nor, lig), 0.0f, 1.0f);
@@ -282,7 +284,7 @@ inline Vec3 renderDirect(const Ray& ray, const PBRScene& scene,
     }
 
     // Light 2: Sky ambient (AO-modulated) + sky specular off reflection
-    {
+    if (useSky) {
         float dif = std::sqrt(std::clamp(0.5f + 0.5f * nor.y, 0.0f, 1.0f)) * occ;
         float spe = std::clamp(0.5f + 0.5f * ref.y, 0.0f, 1.0f);
         spe *= dif;
@@ -294,14 +296,14 @@ inline Vec3 renderDirect(const Ray& ray, const PBRScene& scene,
     }
 
     // Light 3: Back fill (simulates ground-bounce GI, attenuates with height)
-    {
+    if (useBackFill) {
         float dif = std::clamp(dot(nor, normalize(Vec3{0.5f, 0.0f, 0.6f})), 0.0f, 1.0f)
                   * std::clamp(1.0f - h.p.y, 0.0f, 1.0f) * occ;
         lin += albedo * 0.55f * dif * Vec3{0.25f, 0.25f, 0.25f};
     }
 
     // Light 4: Rim / SSS (fakes translucent rim glow)
-    {
+    if (useRim) {
         float rim = std::pow(1.0f + dot(nor, rd), 2.0f) * occ;
         lin += albedo * 0.25f * rim * Vec3{1.0f, 1.0f, 1.0f};
     }
