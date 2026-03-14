@@ -269,7 +269,7 @@ int main(int, char**) {
         sampleCount++;
         {
             // Pixel cone half-angle (rad/pixel) — used for AA checkerboard footprint
-            float fovRad = scene->camera.fov * (kPi / 180.0f);
+            float fovRad = scene->camera.fov * (PI / 180.0f);
             float pixelConeAngle = std::tan(fovRad * 0.5f) * 2.0f / (float)H;
 
             const int rowsPerThread = (H + nThreads - 1) / nThreads;

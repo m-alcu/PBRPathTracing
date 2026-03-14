@@ -3,12 +3,10 @@
 #include "material.hpp"
 #include "rng.hpp"
 #include "scene.hpp"
+#include "constants.hpp"
 #include <cmath>
 #include <algorithm>
 #include <vector>
-
-static constexpr float kPi    = 3.14159265f;
-static constexpr float kInvPi = 0.31830988618f;
 
 // ---------------------------------------------------------------------------
 // Analytical anti-aliased checkerboard (Inigo Quilez's checkersGradBox)
@@ -92,7 +90,7 @@ inline float calcAO(Vec3 pos, Vec3 nor, const PBRScene& scene) {
 // Cosine-weighted hemisphere sample in local space (z = "up" / normal)
 inline Vec3 sampleCosineHemisphere(float u1, float u2) {
     float r   = std::sqrt(u1);
-    float phi = 2.0f * kPi * u2;
+    float phi = 2.0f * PI * u2;
     float x   = r * std::cos(phi);
     float y   = r * std::sin(phi);
     float z   = std::sqrt(std::max(0.0f, 1.0f - u1));
@@ -138,7 +136,7 @@ inline Vec3 fresnelSchlick(float cosTheta, const Vec3& F0) {
 inline float D_GGX(float NoH, float alpha) {
     float a2    = alpha * alpha;
     float denom = NoH * NoH * (a2 - 1.0f) + 1.0f;
-    return a2 / (kPi * denom * denom);
+    return a2 / (PI * denom * denom);
 }
 
 // GGX Smith G1 masking/shadowing for one direction
@@ -166,7 +164,7 @@ inline bool refractVec(const Vec3& v, const Vec3& n, float eta, Vec3& refracted)
 // Sample GGX microfacet normal in local space (z = surface normal).
 // alpha = roughness^2
 inline Vec3 sampleGGX(float alpha, float u1, float u2) {
-    float phi   = 2.0f * kPi * u2;
+    float phi   = 2.0f * PI * u2;
     float a2    = alpha * alpha;
     float cosTheta2 = (1.0f - u1) / std::max(1.0f + (a2 - 1.0f) * u1, 1e-6f);
     float cosTheta  = std::sqrt(std::max(0.0f, cosTheta2));
@@ -192,7 +190,7 @@ inline float sphereLightConePdf(const Vec3& from, const Sphere& sph) {
     float r2    = sph.radius * sph.radius;
     if (dist2 <= r2) return 0.0f;
     float cosMax = std::sqrt(std::max(0.0f, 1.0f - r2 / dist2));
-    return 1.0f / (2.0f * kPi * (1.0f - cosMax));
+    return 1.0f / (2.0f * PI * (1.0f - cosMax));
 }
 
 // Sample a direction uniformly within the subtended cone, write pdf (sr^-1).
@@ -208,7 +206,7 @@ inline Vec3 sampleSphereLight(const Vec3& from, const Sphere& sph,
     float u1       = rng.nextFloat(), u2 = rng.nextFloat();
     float cosTheta = 1.0f - u1 * (1.0f - cosMax);
     float sinTheta = std::sqrt(std::max(0.0f, 1.0f - cosTheta * cosTheta));
-    float phi      = 2.0f * kPi * u2;
+    float phi      = 2.0f * PI * u2;
 
     Vec3 zDir = normalize(toC);
     Vec3 t, b;
@@ -218,7 +216,7 @@ inline Vec3 sampleSphereLight(const Vec3& from, const Sphere& sph,
              + b * (sinTheta * std::sin(phi))
              + zDir * cosTheta;
 
-    pdf = 1.0f / (2.0f * kPi * (1.0f - cosMax));
+    pdf = 1.0f / (2.0f * PI * (1.0f - cosMax));
     return normalize(dir);
 }
 
@@ -470,12 +468,12 @@ inline Vec3 tracePath(Ray ray, RNG& rng,
 
                                 // spec BRDF * cos = F*G*D / (4*NoV)   (NoL cancels with G2 numerator)
                                 Vec3 spec_cos = F_n * (G_n * D_n / (4.0f * NoV));
-                                Vec3 diff_cos = albedo * (1.0f - m.metallic) * kInvPi * NoL_nee;
+                                Vec3 diff_cos = albedo * (1.0f - m.metallic) * InvPI * NoL_nee;
                                 Vec3 f_cos    = pSpec * spec_cos + (1.0f - pSpec) * diff_cos;
 
                                 // BSDF PDF at the light direction (for MIS denominator)
                                 float pdfGGX_n   = D_n * NoH_n / (4.0f * VoH_n);
-                                float pdfLamb_n  = NoLn * kInvPi;
+                                float pdfLamb_n  = NoLn * InvPI;
                                 float pdfBSDF_n  = pSpec * pdfGGX_n + (1.0f - pSpec) * pdfLamb_n;
 
                                 float w_nee = misPower(pdfNEE, pdfBSDF_n);
@@ -510,7 +508,7 @@ inline Vec3 tracePath(Ray ray, RNG& rng,
                     // Mixed BSDF PDF for MIS at next emission hit
                     float D_s      = D_GGX(NoH, alpha);
                     float pdfGGX_s = D_s * NoH / (4.0f * VoH);
-                    float pdfLamb_s = NoL * kInvPi;
+                    float pdfLamb_s = NoL * InvPI;
                     bsdfPdf = pSpec * pdfGGX_s + (1.0f - pSpec) * pdfLamb_s;
 
                 } else {
@@ -527,7 +525,7 @@ inline Vec3 tracePath(Ray ray, RNG& rng,
                     float VoH_d = std::max(dot(wo,  wh_d), 1e-4f);
                     float D_d   = D_GGX(NoH_d, alpha);
                     float pdfGGX_d  = D_d * NoH_d / (4.0f * VoH_d);
-                    float pdfLamb_d = NoL_d * kInvPi;
+                    float pdfLamb_d = NoL_d * InvPI;
                     bsdfPdf = pSpec * pdfGGX_d + (1.0f - pSpec) * pdfLamb_d;
                 }
             }
@@ -546,7 +544,7 @@ inline Vec3 tracePath(Ray ray, RNG& rng,
                 wi = normalize(t * local.x + b * local.y + h.n * local.z);
             }
             beta *= albedo;
-            bsdfPdf = std::max(dot(h.n, wi), 1e-4f) * kInvPi;
+            bsdfPdf = std::max(dot(h.n, wi), 1e-4f) * InvPI;
         }
 
         // Russian roulette from depth 3 (skip for glass: beta stays near 1)
