@@ -239,7 +239,8 @@ inline Vec3 renderDirect(const Ray& ray, const PBRScene& scene,
                          const std::vector<Material>& mats,
                          float pixelConeAngle = 0.002f,
                          bool useSun = true, bool useSky = true,
-                         bool useBackFill = true, bool useRim = true)
+                         bool useBackFill = true, bool useRim = true,
+                         Vec3 sunDir = normalize(Vec3{-0.5f, 0.4f, -0.6f}))
 {
     Hit h = scene.intersect(ray);
     if (!h.hit) return sky(ray.d);
@@ -272,7 +273,7 @@ inline Vec3 renderDirect(const Ray& ray, const PBRScene& scene,
 
     // Light 1: Sun (directional, hard shadow)
     if (useSun) {
-        const Vec3 lig = normalize(Vec3{-0.5f, 0.4f, -0.6f});
+        const Vec3 lig = sunDir;
         Vec3  hal = normalize(lig - rd);
         float dif = std::clamp(dot(nor, lig), 0.0f, 1.0f);
         Hit   sh  = scene.intersect(Ray{h.p + nor * 1e-4f, lig});

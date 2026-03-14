@@ -243,12 +243,27 @@ int main(int, char**) {
     bool useSky      = true;
     bool useBackFill = true;
     bool useRim      = true;
+    bool sunOrbit    = false;
+    float sunAngle   = 0.0f;
+    float sunSpeed   = 0.5f;  // radians per second
+    float sunElev    = 0.4f;  // fixed elevation (radians above horizon)
 
     while (!glfwWindowShouldClose(window)) {
         glfwPollEvents();
 
         if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
             glfwSetWindowShouldClose(window, GLFW_TRUE);
+
+        // ---- Sun orbit animation ----------------------------------------
+        if (sunOrbit) {
+            sunAngle += sunSpeed * io.DeltaTime;
+            resetAccum();
+        }
+        Vec3 sunDir = normalize(Vec3{
+            std::cos(sunAngle) * std::cos(sunElev),
+            std::sin(sunElev),
+            std::sin(sunAngle) * std::cos(sunElev)
+        });
 
         // ---- Render one pass (1 SPP, multi-threaded row-striping) ------
         sampleCount++;
@@ -275,7 +290,7 @@ int main(int, char**) {
                                 Ray ray = scene->camera.generateRay(
                                     px, py, W, H, rng.nextFloat(), rng.nextFloat());
                                 accum[py * W + px] += useAO
-                                        ? renderDirect(ray, *scene, scene->materials, pixelConeAngle, useSun, useSky, useBackFill, useRim)
+                                        ? renderDirect(ray, *scene, scene->materials, pixelConeAngle, useSun, useSky, useBackFill, useRim, sunDir)
                                         : tracePath(ray, rng, scene->materials, *scene, brdfMode, useNEE, pixelConeAngle);
                             } else {
                                 uint64_t seed =
@@ -285,7 +300,7 @@ int main(int, char**) {
                                 Ray ray = scene->camera.generateRay(
                                     px, py, W, H, rng.nextFloat(), rng.nextFloat());
                                 accum[py * W + px] += useAO
-                                        ? renderDirect(ray, *scene, scene->materials, pixelConeAngle, useSun, useSky, useBackFill, useRim)
+                                        ? renderDirect(ray, *scene, scene->materials, pixelConeAngle, useSun, useSky, useBackFill, useRim, sunDir)
                                         : tracePath(ray, rng, scene->materials, *scene, brdfMode, useNEE, pixelConeAngle);
                             }
                         }
@@ -400,6 +415,21 @@ int main(int, char**) {
             lightCheck("Sky",       useSky);
             lightCheck("Back fill", useBackFill);
             lightCheck("Rim",       useRim);
+
+            ImGui::Separator();
+            ImGui::TextDisabled("Sun orbit:");
+            ImGui::Checkbox("Orbit", &sunOrbit);
+            ImGui::SliderFloat("Speed", &sunSpeed, 0.1f, 5.0f);
+            {
+                float prevElev = sunElev;
+                ImGui::SliderFloat("Elevation", &sunElev, 0.05f, 1.5f);
+                if (sunElev != prevElev) resetAccum();
+            }
+            {
+                float prevAngle = sunAngle;
+                ImGui::SliderFloat("Angle",     &sunAngle, 0.0f, 6.2832f);
+                if (sunAngle != prevAngle) resetAccum();
+            }
         }
 
         ImGui::Separator();
