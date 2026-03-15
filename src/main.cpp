@@ -408,6 +408,40 @@ int main(int, char**) {
         }
 
         ImGui::Separator();
+        {
+            static char saveName[128]      = "";
+            static std::string saveStatus  = "";
+            static float       statusTimer = 0.0f;
+            static std::string lastScene   = "";
+
+            // Keep input in sync when the loaded scene changes.
+            if (scene->name != lastScene) {
+                std::snprintf(saveName, sizeof(saveName), "%s", scene->name.c_str());
+                lastScene = scene->name;
+            }
+
+            ImGui::SetNextItemWidth(160.0f);
+            ImGui::InputText("##savename", saveName, sizeof(saveName));
+            ImGui::SameLine();
+            if (ImGui::Button("Save YAML")) {
+                std::string path = std::string(SCENES_PATH) + "/" + saveName + ".yaml";
+                try {
+                    PBRSceneLoader::saveToFile(*scene, path);
+                    saveStatus  = "Saved!";
+                    scanScenes(SCENES_PATH);  // refresh combo list
+                } catch (const std::exception& ex) {
+                    saveStatus = std::string("Error: ") + ex.what();
+                }
+                statusTimer = 3.0f;
+            }
+            if (statusTimer > 0.0f) {
+                statusTimer -= io.DeltaTime;
+                ImGui::SameLine();
+                ImGui::TextDisabled("%s", saveStatus.c_str());
+            }
+        }
+
+        ImGui::Separator();
         ImGui::TextDisabled("Drag: orbit   Scroll: zoom   Esc: quit");
         ImGui::End();
 

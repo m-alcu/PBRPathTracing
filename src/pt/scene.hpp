@@ -21,9 +21,17 @@
 // PBR Scene
 // ---------------------------------------------------------------------------
 
+// Remembers each "type: obj" entry so saveToFile can reconstruct it.
+struct ObjRef {
+    std::string file;
+    int         matId  = 0;
+    bool        useMtl = false;
+};
+
 struct PBRScene {
     std::string name;
     std::vector<Triangle>    triangles;
+    std::vector<ObjRef>      objRefs;   // source records for saveToFile
     std::vector<Sphere>      spheres;
     std::vector<Torus>       tori;
     std::vector<Plane>       planes;

@@ -4,9 +4,11 @@
 #include "vendor/tinyobjloader/tiny_obj_loader.h"
 #include "../texture.hpp"
 #include <filesystem>
+#include <fstream>
 #include <stdexcept>
 #include <unordered_map>
 #include <cstdio>
+#include <cstring>
 
 namespace PBRSceneLoader {
 
@@ -242,6 +244,7 @@ std::unique_ptr<PBRScene> loadFromFile(const std::string& yamlPath) {
                 bool useMtl = on["use_obj_materials"] && on["use_obj_materials"].as<bool>();
                 loadObj(file, matId, scene->triangles, &scene->materials,
                         &scene->textures, &texCache, useMtl);
+                scene->objRefs.push_back({file, matId, useMtl});
 
             } else if (type == "sphere") {
                 Sphere sph;
@@ -320,6 +323,142 @@ std::unique_ptr<PBRScene> loadFromFile(const std::string& yamlPath) {
                  scene->materials.size());
 
     return scene;
+}
+
+// ---------------------------------------------------------------------------
+// saveToFile
+// ---------------------------------------------------------------------------
+
+void saveToFile(const PBRScene& scene, const std::string& yamlPath) {
+    std::ofstream f(yamlPath);
+    if (!f)
+        throw std::runtime_error("Cannot open '" + yamlPath + "' for writing");
+
+    // Float → string with up to 6 significant digits, no trailing zeros.
+    auto flt = [](float v) -> std::string {
+        char buf[32];
+        std::snprintf(buf, sizeof(buf), "%.6g", v);
+        return buf;
+    };
+
+    // [x, y, z]
+    auto v3 = [&](Vec3 v) -> std::string {
+        return "[" + flt(v.x) + ", " + flt(v.y) + ", " + flt(v.z) + "]";
+    };
+
+    // "mat_N"
+    auto matName = [](int i) -> std::string {
+        return "mat_" + std::to_string(i);
+    };
+
+    // ---- Header ----------------------------------------------------------
+    f << "scene:\n";
+    f << "  name: \"" << scene.name << "\"\n";
+
+    // ---- Camera ----------------------------------------------------------
+    f << "  camera:\n";
+    f << "    position: " << v3(scene.camera.pos) << "\n";
+    f << "    target:   " << v3(scene.camera.orbitTarget) << "\n";
+    f << "    fov: " << flt(scene.camera.fov) << "\n";
+
+    // ---- Materials -------------------------------------------------------
+    f << "  materials:\n";
+    for (int i = 0; i < (int)scene.materials.size(); ++i) {
+        const Material& m = scene.materials[i];
+        f << "    - name: " << matName(i) << "\n";
+        f << "      albedo: " << v3(m.albedo) << "\n";
+        if (m.emission.x > 0.0f || m.emission.y > 0.0f || m.emission.z > 0.0f)
+            f << "      emission: " << v3(m.emission) << "\n";
+        if (m.metallic  != 0.0f)  f << "      metallic: "  << flt(m.metallic)  << "\n";
+        if (m.roughness != 0.0f)  f << "      roughness: " << flt(m.roughness) << "\n";
+        // Always write ior for transmissive materials even when it equals the default.
+        if (m.ior != 1.5f || m.transmission > 0.0f)
+            f << "      ior: " << flt(m.ior) << "\n";
+        if (m.transmission != 0.0f)
+            f << "      transmission: " << flt(m.transmission) << "\n";
+        if (m.checker) {
+            f << "      checker: true\n";
+            f << "      checker_scale: " << flt(m.checkerScale) << "\n";
+            f << "      checker_color2: " << v3(m.checkerAlbedo2) << "\n";
+        }
+    }
+
+    // ---- Objects ---------------------------------------------------------
+    f << "  objects:\n";
+
+    for (const auto& sph : scene.spheres) {
+        f << "    - type: sphere\n";
+        f << "      center: " << v3(sph.center) << "\n";
+        f << "      radius: " << flt(sph.radius) << "\n";
+        f << "      material: " << matName(sph.matId) << "\n";
+        if (sph.raymarch) f << "      raymarch: true\n";
+    }
+
+    for (const auto& tor : scene.tori) {
+        f << "    - type: torus\n";
+        f << "      center: " << v3(tor.center) << "\n";
+        f << "      axis: "   << v3(tor.axis)   << "\n";
+        f << "      major_radius: " << flt(tor.majorR) << "\n";
+        f << "      minor_radius: " << flt(tor.minorR) << "\n";
+        f << "      material: " << matName(tor.matId) << "\n";
+    }
+
+    for (const auto& pl : scene.planes) {
+        f << "    - type: plane\n";
+        f << "      normal: " << v3(pl.normal) << "\n";
+        f << "      offset: " << flt(pl.offset) << "\n";
+        f << "      material: " << matName(pl.matId) << "\n";
+    }
+
+    for (const auto& box : scene.boxes) {
+        f << "    - type: box\n";
+        f << "      center: "       << v3(box.center) << "\n";
+        f << "      half_extents: " << v3(box.half)   << "\n";
+        f << "      material: " << matName(box.matId) << "\n";
+    }
+
+    for (const auto& cap : scene.capsules) {
+        f << "    - type: capsule\n";
+        f << "      a: "      << v3(cap.a)          << "\n";
+        f << "      b: "      << v3(cap.b)          << "\n";
+        f << "      radius: " << flt(cap.radius)    << "\n";
+        f << "      material: " << matName(cap.matId) << "\n";
+    }
+
+    for (const auto& cyl : scene.cylinders) {
+        f << "    - type: cylinder\n";
+        f << "      center: "      << v3(cyl.center)         << "\n";
+        f << "      axis: "        << v3(cyl.axis)           << "\n";
+        f << "      radius: "      << flt(cyl.radius)        << "\n";
+        f << "      half_height: " << flt(cyl.halfHeight)    << "\n";
+        f << "      material: "    << matName(cyl.matId)     << "\n";
+    }
+
+    for (const auto& rb : scene.roundedBoxes) {
+        f << "    - type: rounded_box\n";
+        f << "      center: "        << v3(rb.center)           << "\n";
+        f << "      half_extents: "  << v3(rb.half)             << "\n";
+        f << "      corner_radius: " << flt(rb.cornerRadius)    << "\n";
+        f << "      material: "      << matName(rb.matId)       << "\n";
+    }
+
+    for (const auto& obj : scene.objRefs) {
+        f << "    - type: obj\n";
+        f << "      file: \"" << obj.file << "\"\n";
+        if (obj.useMtl)
+            f << "      use_obj_materials: true\n";
+        else
+            f << "      material: " << matName(obj.matId) << "\n";
+    }
+
+    if (!scene.triangles.empty() && scene.objRefs.empty())
+        std::fprintf(stderr,
+            "[scene_loader] saveToFile: %zu triangles have no ObjRef record "
+            "and were NOT written to '%s'.\n",
+            scene.triangles.size(), yamlPath.c_str());
+
+    std::fprintf(stdout, "[scene_loader] Saved '%s' -> '%s'\n",
+                 scene.name.c_str(), yamlPath.c_str());
 }
 
 } // namespace PBRSceneLoader
