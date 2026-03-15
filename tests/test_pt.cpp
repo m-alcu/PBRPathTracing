@@ -13,6 +13,8 @@
 #include "pt/bvh.hpp"
 #include "pt/camera.hpp"
 #include "pt/tracer.hpp"   // sky, sampleCosineHemisphere, makeONB, GGX helpers, etc.
+#include "pt/sampler.hpp"
+#include "pt/film.hpp"
 
 constexpr float EPS = 1e-4f;
 
@@ -427,6 +429,247 @@ static void test_tracepath_empty_scene() {
 }
 
 // ============================================================================
+// Sampler (sampler.hpp)
+// ============================================================================
+
+static void test_sampler() {
+    // IndependentSampler: getCameraSample gives correct pixel + [0,1) offset
+    IndependentSampler s(42u);
+    CameraSample cs = s.getCameraSample(10, 20);
+    CHECK(cs.pFilmX >= 10.0f && cs.pFilmX < 11.0f);
+    CHECK(cs.pFilmY >= 20.0f && cs.pFilmY < 21.0f);
+
+    // nextFloat() in [0, 1)
+    bool allInRange = true;
+    for (int i = 0; i < 200; ++i) {
+        float f = s.nextFloat();
+        if (f < 0.0f || f >= 1.0f) allInRange = false;
+    }
+    CHECK(allInRange);
+
+    // clone() with different seeds → different streams
+    auto s2 = s.clone(0u);
+    auto s3 = s.clone(1u);
+    CHECK(s2->nextFloat() != s3->nextFloat());
+
+    // HashSampler: same pixel + same pass → identical sample (reproducible)
+    HashSampler h1(640, 5u), h2(640, 5u);
+    CameraSample cs1 = h1.getCameraSample(100, 50);
+    CameraSample cs2 = h2.getCameraSample(100, 50);
+    CHECK(near(cs1.pFilmX, cs2.pFilmX) && near(cs1.pFilmY, cs2.pFilmY));
+
+    // HashSampler: different pass → different sample
+    HashSampler h3(640, 6u);
+    CameraSample cs3 = h3.getCameraSample(100, 50);
+    CHECK(!near(cs1.pFilmX, cs3.pFilmX));
+
+    // HashSampler: offset stays within its pixel
+    CHECK(cs1.pFilmX >= 100.0f && cs1.pFilmX < 101.0f);
+    CHECK(cs1.pFilmY >=  50.0f && cs1.pFilmY <  51.0f);
+
+    // HashSampler: nextFloat() after getCameraSample in [0, 1)
+    bool hashInRange = true;
+    h1.getCameraSample(0, 0);
+    for (int i = 0; i < 100; ++i)
+        if (h1.nextFloat() < 0.0f || h1.nextFloat() >= 1.0f) hashInRange = false;
+    CHECK(hashInRange);
+}
+
+// ============================================================================
+// Film (film.hpp)
+// ============================================================================
+
+static void test_film() {
+    Film film(4, 4);
+
+    // Fresh film: zero radiance, zero spp
+    CHECK(near(film.getRadiance(0, 0), {0,0,0}));
+    CHECK(film.spp(0, 0) == 0);
+    CHECK(film.totalSamples() == 0);
+
+    // addSample splats into floor(pFilm) pixel
+    CameraSample cs{1.7f, 2.3f, 0.f, 0.f};  // → pixel (1, 2)
+    film.addSample(cs, {1.0f, 0.5f, 0.0f});
+    CHECK(film.spp(1, 2) == 1);
+    CHECK(near(film.getRadiance(1, 2), {1.0f, 0.5f, 0.0f}));
+    CHECK(film.spp(0, 0) == 0);  // other pixel untouched
+
+    // Second sample → average
+    film.addSample(cs, {0.0f, 0.5f, 1.0f});
+    CHECK(film.spp(1, 2) == 2);
+    CHECK(near(film.getRadiance(1, 2), {0.5f, 0.5f, 0.5f}));
+
+    // reset() clears everything
+    film.reset();
+    CHECK(film.spp(1, 2) == 0);
+    CHECK(near(film.getRadiance(1, 2), {0,0,0}));
+    CHECK(film.totalSamples() == 0);
+
+    // Out-of-bounds samples are silently ignored
+    film.addSample({-0.5f, 0.5f, 0.f, 0.f}, {1,1,1});
+    film.addSample({ 4.5f, 0.5f, 0.f, 0.f}, {1,1,1});
+    film.addSample({ 0.5f,-0.5f, 0.f, 0.f}, {1,1,1});
+    CHECK(film.totalSamples() == 0);
+
+    // getColor: tone-mapped result always in [0, 1]^3
+    film.addSample({0.5f, 0.5f, 0.f, 0.f}, {100.0f, 0.0f, 0.5f});
+    Vec3 c = film.getColor(0, 0);
+    CHECK(c.x >= 0.0f && c.x <= 1.0f);
+    CHECK(c.y >= 0.0f && c.y <= 1.0f);
+    CHECK(c.z >= 0.0f && c.z <= 1.0f);
+
+    // High radiance → close to 1 after Reinhard (saturation)
+    CHECK(c.x > 0.9f);
+    // Zero radiance → black
+    CHECK(near(c.y, 0.0f));
+
+    // toBGRA32: alpha = 0xFF for every pixel
+    Film film2(2, 2);
+    film2.addSample({0.5f, 0.5f, 0.f, 0.f}, {1.0f, 0.0f, 0.0f});
+    auto bgra = film2.toBGRA32();
+    CHECK((int)bgra.size() == 4);
+    bool alphaFF = true;
+    for (uint32_t p : bgra)
+        if ((p >> 24) != 0xFFu) alphaFF = false;
+    CHECK(alphaFF);
+}
+
+// ============================================================================
+// refractVec (tracer.hpp)
+// ============================================================================
+
+static void test_refract() {
+    Vec3 n{0, 0, 1};
+
+    // eta=1 (no bending): ray passes straight through
+    Vec3 inc{0, 0, -1}, out;
+    bool ok = refractVec(inc, n, 1.0f, out);
+    CHECK(ok);
+    CHECK(near(out, {0, 0, -1}, 1e-3f));
+
+    // Normal air→glass refraction: bends toward normal, unit length
+    Vec3 oblique = normalize(Vec3{0.5f, 0.0f, -1.0f});
+    ok = refractVec(oblique, n, 1.0f / 1.5f, out);
+    CHECK(ok);
+    CHECK(near(length(out), 1.0f, 1e-3f));
+    // Refracted ray is bent closer to normal (smaller x component)
+    CHECK(std::fabs(out.x) < std::fabs(oblique.x));
+
+    // Total internal reflection: glass→air at steep angle
+    // Critical angle ≈ 41.8°; use ~65° incidence (sin²T > 1)
+    Vec3 steep = normalize(Vec3{0.9f, 0.0f, -0.44f});
+    ok = refractVec(steep, n, 1.5f, out);
+    CHECK(!ok);
+}
+
+// ============================================================================
+// sampleGGX (tracer.hpp)
+// ============================================================================
+
+static void test_sample_ggx() {
+    // All microfacet normals: unit length and z >= 0 (upper hemisphere)
+    bool allUnit = true, allUpperHemi = true;
+    for (int i = 0; i < 64; ++i) {
+        float u1 = (float)i / 64.0f;
+        float u2 = (float)((i * 37) % 64) / 64.0f;
+        Vec3 h = sampleGGX(0.5f, u1, u2);
+        if (!near(length(h), 1.0f, 1e-3f)) allUnit      = false;
+        if (h.z < -EPS)                    allUpperHemi = false;
+    }
+    CHECK(allUnit);
+    CHECK(allUpperHemi);
+
+    // Rougher surface (alpha=1) → lower average z than smooth (alpha=0.1)
+    float sumZ_rough = 0.f, sumZ_smooth = 0.f;
+    for (int i = 0; i < 64; ++i) {
+        float u1 = (float)i / 64.0f;
+        float u2 = (float)((i * 37) % 64) / 64.0f;
+        sumZ_rough  += sampleGGX(1.0f, u1, u2).z;
+        sumZ_smooth += sampleGGX(0.1f, u1, u2).z;
+    }
+    CHECK(sumZ_smooth > sumZ_rough);
+}
+
+// ============================================================================
+// sphereLightConePdf (tracer.hpp)
+// ============================================================================
+
+static void test_sphere_light_cone_pdf() {
+    Sphere sph;
+    sph.center = {0, 5, 0};
+    sph.radius = 1.0f;
+
+    // From outside: pdf > 0
+    float pdf = sphereLightConePdf({0, 0, 0}, sph);
+    CHECK(pdf > 0.0f);
+
+    // Farther away → smaller solid angle → higher pdf
+    // dist=5 → pdf≈7.96 ;  dist=2 → pdf≈1.19
+    float pdfFar  = sphereLightConePdf({0, 0, 0}, sph);  // dist=5
+    float pdfNear = sphereLightConePdf({0, 3, 0}, sph);  // dist=2
+    CHECK(pdfFar > pdfNear);
+
+    // Inside sphere → pdf = 0
+    float pdfInside = sphereLightConePdf({0, 5, 0}, sph);
+    CHECK(near(pdfInside, 0.0f));
+}
+
+// ============================================================================
+// tracePath: diffuse sphere (finite, non-negative, not pure sky)
+// ============================================================================
+
+static void test_tracepath_diffuse_sphere() {
+    PBRScene scene;
+    Material mat;
+    mat.albedo    = {0.8f, 0.1f, 0.1f};
+    mat.roughness = 1.0f;
+    scene.materials.push_back(mat);
+
+    Sphere sph;
+    sph.center   = {0, 0, -3};
+    sph.radius   = 1.0f;
+    sph.matId    = 0;
+    sph.raymarch = false;
+    scene.spheres.push_back(sph);
+
+    RNG rng(42u);
+    Ray ray{{0, 0, 0}, {0, 0, -1}};
+    Vec3 L = tracePath(ray, rng, scene.materials, scene, BRDFMode::Lambertian, false);
+
+    CHECK(std::isfinite(L.x) && std::isfinite(L.y) && std::isfinite(L.z));
+    CHECK(L.x >= 0.0f && L.y >= 0.0f && L.z >= 0.0f);
+
+    // Result should differ from a plain sky ray (sphere was hit)
+    Vec3 skyL = sky({0, 0, -1});
+    CHECK(!near(L, skyL, 0.1f));
+}
+
+// ============================================================================
+// tracePath: emissive sphere → returns emission directly
+// ============================================================================
+
+static void test_tracepath_emissive() {
+    PBRScene scene;
+    Material mat;
+    mat.emission = {5.0f, 3.0f, 1.0f};
+    scene.materials.push_back(mat);
+
+    Sphere sph;
+    sph.center   = {0, 0, -2};
+    sph.radius   = 1.0f;
+    sph.matId    = 0;
+    sph.raymarch = false;
+    scene.spheres.push_back(sph);
+
+    RNG rng(1u);
+    Ray ray{{0, 0, 0}, {0, 0, -1}};
+    Vec3 L = tracePath(ray, rng, scene.materials, scene);
+
+    // First hit is an emissive surface → no scattering, emission returned directly
+    CHECK(near(L, {5.0f, 3.0f, 1.0f}, 1e-3f));
+}
+
+// ============================================================================
 // Main
 // ============================================================================
 
@@ -444,6 +687,13 @@ int main() {
     test_brdf_helpers();
     test_camera();
     test_tracepath_empty_scene();
+    test_sampler();
+    test_film();
+    test_refract();
+    test_sample_ggx();
+    test_sphere_light_cone_pdf();
+    test_tracepath_diffuse_sphere();
+    test_tracepath_emissive();
 
     if (failures == 0) {
         std::printf("\nAll tests passed.\n");
