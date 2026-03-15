@@ -15,6 +15,9 @@
 #include "pt/tracer.hpp"   // sky, sampleCosineHemisphere, makeONB, GGX helpers, etc.
 #include "pt/sampler.hpp"
 #include "pt/film.hpp"
+#include "pt/scene_loader.hpp"
+#include <fstream>
+#include <sstream>
 
 constexpr float EPS = 1e-4f;
 
@@ -670,6 +673,101 @@ static void test_tracepath_emissive() {
 }
 
 // ============================================================================
+// saveToFile (scene_loader.hpp)
+// ============================================================================
+
+static void test_scene_save() {
+    // Build a scene entirely in-memory (no file I/O needed for construction).
+    PBRScene scene;
+    scene.name = "save_test";
+
+    Camera cam;
+    cam.setLookAt({1.0f, 2.0f, 3.0f}, {0.0f, 0.0f, 0.0f});
+    cam.fov = 60.0f;
+    scene.camera = cam;
+
+    // mat_0: diffuse with roughness
+    Material m0; m0.albedo = {0.8f, 0.2f, 0.1f}; m0.roughness = 0.5f;
+    // mat_1: emissive light
+    Material m1; m1.albedo = {1,1,1}; m1.emission = {5.0f, 4.0f, 3.0f};
+    // mat_2: glass (transmission + ior)
+    Material m2; m2.albedo = {0.9f,0.9f,1.0f}; m2.transmission = 1.0f; m2.ior = 1.5f;
+    // mat_3: checker floor
+    Material m3; m3.albedo = {0.1f,0.1f,0.1f}; m3.checker = true;
+    m3.checkerScale = 3.0f; m3.checkerAlbedo2 = {0.9f,0.9f,0.9f};
+    scene.materials = {m0, m1, m2, m3};
+
+    Sphere  sph;  sph.center={1,2,3}; sph.radius=0.5f; sph.matId=0;
+    Sphere  sph2; sph2.center={0,5,0}; sph2.radius=1.0f; sph2.matId=1; sph2.raymarch=true;
+    Plane   pl;   pl.normal={0,1,0}; pl.offset=0; pl.matId=3;
+    Torus   tor;  tor.center={1,0,0}; tor.majorR=0.5f; tor.minorR=0.2f; tor.axis={0,1,0}; tor.matId=0;
+    Box     box;  box.center={2,1,0}; box.half={0.5f,0.3f,0.4f}; box.matId=0;
+    Capsule cap;  cap.a={0,0,0}; cap.b={0,1,0}; cap.radius=0.2f; cap.matId=0;
+    Cylinder cyl; cyl.center={3,0,0}; cyl.axis={0,1,0}; cyl.radius=0.3f; cyl.halfHeight=0.6f; cyl.matId=0;
+    RoundedBox rb; rb.center={4,0,0}; rb.half={0.4f,0.5f,0.3f}; rb.cornerRadius=0.1f; rb.matId=0;
+    scene.spheres     = {sph, sph2};
+    scene.planes      = {pl};
+    scene.tori        = {tor};
+    scene.boxes       = {box};
+    scene.capsules    = {cap};
+    scene.cylinders   = {cyl};
+    scene.roundedBoxes= {rb};
+
+    // ObjRef — tests that file references survive round-trip
+    scene.objRefs.push_back({"resources/objs/bunny.obj", 0, false});
+
+    const std::string path = "/tmp/test_scene_save.yaml";
+    PBRSceneLoader::saveToFile(scene, path);
+
+    // Read back as text
+    std::ifstream f(path);
+    CHECK(f.good());
+    std::string yaml((std::istreambuf_iterator<char>(f)),
+                      std::istreambuf_iterator<char>());
+
+    auto has = [&](const char* s) { return yaml.find(s) != std::string::npos; };
+
+    // Scene name
+    CHECK(has("save_test"));
+
+    // Camera
+    CHECK(has("fov: 60"));
+
+    // All 4 materials written
+    CHECK(has("mat_0")); CHECK(has("mat_1")); CHECK(has("mat_2")); CHECK(has("mat_3"));
+
+    // Emission only on mat_1
+    CHECK(has("emission:"));
+    // Glass fields on mat_2
+    CHECK(has("transmission: 1"));
+    CHECK(has("ior: 1.5"));
+    // Checker fields on mat_3
+    CHECK(has("checker: true"));
+    CHECK(has("checker_scale: 3"));
+    CHECK(has("checker_color2:"));
+
+    // Non-default values written, zero-defaults omitted
+    CHECK(has("roughness: 0.5"));    // m0 roughness
+    CHECK(!has("metallic:"));        // all metallic=0, never written
+
+    // Every primitive type present
+    CHECK(has("type: sphere"));
+    CHECK(has("type: torus"));
+    CHECK(has("type: plane"));
+    CHECK(has("type: box"));
+    CHECK(has("type: capsule"));
+    CHECK(has("type: cylinder"));
+    CHECK(has("type: rounded_box"));
+
+    // Raymarch flag on sph2
+    CHECK(has("raymarch: true"));
+
+    // OBJ reference preserved
+    CHECK(has("type: obj"));
+    CHECK(has("resources/objs/bunny.obj"));
+}
+
+// ============================================================================
 // Main
 // ============================================================================
 
@@ -694,6 +792,7 @@ int main() {
     test_sphere_light_cone_pdf();
     test_tracepath_diffuse_sphere();
     test_tracepath_emissive();
+    test_scene_save();
 
     if (failures == 0) {
         std::printf("\nAll tests passed.\n");

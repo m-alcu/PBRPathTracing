@@ -72,7 +72,9 @@ if(BUILD_TESTS)
 
     add_executable(test_pt
         tests/test_pt.cpp
+        src/pt/scene_loader.cpp
         src/vendor/nothings/stb_image.cpp
+        src/vendor/tinyobjloader/tiny_obj_loader.cpp
     )
     target_include_directories(test_pt PRIVATE ${CMAKE_SOURCE_DIR}/src)
     set_target_properties(test_pt PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
