@@ -1,6 +1,7 @@
 #pragma once
 #include "math.hpp"
 #include "constants.hpp"
+#include "sampler.hpp"
 #include <cmath>
 
 struct Camera {
@@ -32,15 +33,17 @@ struct Camera {
         forward = normalize(target - eye);
     }
 
-    Ray generateRay(int px, int py, int w, int h, float du, float dv) const {
+    // PBRT-style: takes a CameraSample from a Sampler.
+    // pFilmX/Y are continuous pixel-space coordinates, e.g. 3.72 means pixel 3 + offset 0.72.
+    Ray generateRayFromSample(const CameraSample& s, int w, int h) const {
         Vec3 right = normalize(cross(forward, Vec3{0.0f, 1.0f, 0.0f}));
         if (length(right) < 0.001f) right = {1.0f, 0.0f, 0.0f};
         Vec3 up = cross(right, forward);
 
         float aspect = (float)w / (float)h;
         float scale  = std::tan(fov * 0.5f * RAD);
-        float ndcX   = (2.0f * ((float)px + du) / (float)w - 1.0f) * aspect * scale;
-        float ndcY   = (1.0f - 2.0f * ((float)py + dv) / (float)h) * scale;
+        float ndcX   = (2.0f * s.pFilmX / (float)w - 1.0f) * aspect * scale;
+        float ndcY   = (1.0f - 2.0f * s.pFilmY / (float)h) * scale;
 
         Vec3 dir = normalize(forward + right * ndcX + up * ndcY);
         return {pos, dir};

@@ -387,7 +387,7 @@ static void test_camera() {
     cam.setLookAt({0,0,5}, {0,0,0});
 
     // Center pixel ray should point roughly in the -z direction
-    Ray r = cam.generateRay(320, 240, 640, 480, 0.5f, 0.5f);
+    Ray r = cam.generateRayFromSample({320.5f, 240.5f, 0.f, 0.f}, 640, 480);
     CHECK(r.d.z < -0.9f);  // mostly forward
     CHECK(near(length(r.d), 1.0f, 1e-3f));
 
@@ -395,8 +395,8 @@ static void test_camera() {
     CHECK(near(r.o, {0,0,5}, 1e-3f));
 
     // Top-left vs bottom-right pixels should produce diverging rays
-    Ray tl = cam.generateRay(  0,   0, 640, 480, 0.5f, 0.5f);
-    Ray br = cam.generateRay(639, 479, 640, 480, 0.5f, 0.5f);
+    Ray tl = cam.generateRayFromSample({  0.5f,   0.5f, 0.f, 0.f}, 640, 480);
+    Ray br = cam.generateRayFromSample({639.5f, 479.5f, 0.f, 0.f}, 640, 480);
     CHECK(tl.d.x < br.d.x);  // tl goes left, br goes right
     CHECK(tl.d.y > br.d.y);  // tl goes up, br goes down
 }

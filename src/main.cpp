@@ -10,8 +10,8 @@
 #include "vendor/imgui/imgui_impl_opengl3.h"
 
 #include "pt/scene_loader.hpp"
-#include "pt/tracer.hpp"
-#include "pt/rng.hpp"
+#include "pt/integrator.hpp"
+#include "pt/film.hpp"
 #include "constants.hpp"
 
 #include <algorithm>
@@ -54,34 +54,16 @@ static void scanScenes(const std::string& dir) {
 }
 
 // ---------------------------------------------------------------------------
-// Tone mapping
-// ---------------------------------------------------------------------------
-
-// Reinhard + gamma-2 (sqrt) tone mapping — outputs BGRA bytes as uint32_t
-inline uint32_t tonemapPixel(Vec3 c, float invSpp) {
-    c *= invSpp;
-    c.x = c.x / (1.0f + c.x);
-    c.y = c.y / (1.0f + c.y);
-    c.z = c.z / (1.0f + c.z);
-    auto g = [](float x) { return std::sqrt(std::clamp(x, 0.0f, 1.0f)); };
-    uint8_t r = (uint8_t)(g(c.x) * 255.0f + 0.5f);
-    uint8_t gn = (uint8_t)(g(c.y) * 255.0f + 0.5f);
-    uint8_t b  = (uint8_t)(g(c.z) * 255.0f + 0.5f);
-    // BGRA layout (matches GL_BGRA GL_UNSIGNED_BYTE on little-endian)
-    return (0xFFu << 24) | ((uint32_t)r << 16) | ((uint32_t)gn << 8) | b;
-}
-
-// ---------------------------------------------------------------------------
 // App state shared with GLFW callbacks
 // ---------------------------------------------------------------------------
 
 struct AppState {
-    PBRScene*          scene       = nullptr;
-    std::vector<Vec3>* accum       = nullptr;
-    int*               sampleCount = nullptr;
-    bool               dragging    = false;
-    double             lastX       = 0.0;
-    double             lastY       = 0.0;
+    PBRScene* scene     = nullptr;
+    Film*     film      = nullptr;
+    int*      passCount = nullptr;
+    bool      dragging  = false;
+    double    lastX     = 0.0;
+    double    lastY     = 0.0;
 };
 
 static void mouseButtonCb(GLFWwindow* w, int button, int action, int) {
@@ -107,8 +89,8 @@ static void cursorPosCb(GLFWwindow* w, double x, double y) {
     app->scene->camera.orbitElevation = std::clamp(
         app->scene->camera.orbitElevation + (float)dy * 0.005f, -1.5f, 1.5f);
     app->scene->camera.applyOrbit();
-    std::fill(app->accum->begin(), app->accum->end(), Vec3{});
-    *app->sampleCount = 0;
+    app->film->reset();
+    *app->passCount = 0;
 }
 
 static void scrollCb(GLFWwindow* w, double /*dx*/, double dy) {
@@ -117,8 +99,8 @@ static void scrollCb(GLFWwindow* w, double /*dx*/, double dy) {
     app->scene->camera.orbitRadius = std::max(0.1f,
         app->scene->camera.orbitRadius - (float)dy * 0.15f);
     app->scene->camera.applyOrbit();
-    std::fill(app->accum->begin(), app->accum->end(), Vec3{});
-    *app->sampleCount = 0;
+    app->film->reset();
+    *app->passCount = 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -176,15 +158,17 @@ int main(int, char**) {
     if (!scene) return 1;
 
     // ------------------------------------------------------------------
-    // Accumulation buffer
+    // Film + integrators
     // ------------------------------------------------------------------
-    std::vector<Vec3>     accum(W * H, Vec3{});
-    std::vector<uint32_t> pixels(W * H, 0xFF000000u);
-    int sampleCount = 0;
+    Film film(W, H);
+    int  passCount = 0;
+
+    PathIntegrator   pathIntegrator;
+    DirectIntegrator directIntegrator;
 
     auto resetAccum = [&]() {
-        std::fill(accum.begin(), accum.end(), Vec3{});
-        sampleCount = 0;
+        film.reset();
+        passCount = 0;
     };
 
     // ------------------------------------------------------------------
@@ -192,9 +176,9 @@ int main(int, char**) {
     // init so ImGui can chain to them via its PrevUserCallback mechanism.
     // ------------------------------------------------------------------
     AppState appState;
-    appState.scene       = scene.get();
-    appState.accum       = &accum;
-    appState.sampleCount = &sampleCount;
+    appState.scene     = scene.get();
+    appState.film      = &film;
+    appState.passCount = &passCount;
     glfwSetWindowUserPointer(window, &appState);
     glfwSetMouseButtonCallback(window, mouseButtonCb);
     glfwSetCursorPosCallback(window, cursorPosCb);
@@ -265,59 +249,50 @@ int main(int, char**) {
             std::sin(sunAngle) * std::cos(sunElev)
         });
 
-        // ---- Render one pass (1 SPP, multi-threaded row-striping) ------
-        sampleCount++;
+        // ---- Render one pass (1 SPP) -----------------------------------
+        passCount++;
         {
-            // Pixel cone half-angle (rad/pixel) — used for AA checkerboard footprint
             float fovRad = scene->camera.fov * (PI / 180.0f);
             float pixelConeAngle = std::tan(fovRad * 0.5f) * 2.0f / (float)H;
 
-            const int rowsPerThread = (H + nThreads - 1) / nThreads;
-            std::vector<std::thread> threads;
-            threads.reserve(nThreads);
-
-            for (int tid = 0; tid < nThreads; tid++) {
-                int rowStart = tid * rowsPerThread;
-                int rowEnd   = std::min(rowStart + rowsPerThread, H);
-                threads.emplace_back([&, rowStart, rowEnd]() {
-                    for (int py = rowStart; py < rowEnd; py++) {
-                        for (int px = 0; px < W; px++) {
-                            if (useHashRng) {
-                                uint32_t seed =
-                                    ((uint32_t)py * (uint32_t)W + (uint32_t)px)
-                                    ^ ((uint32_t)sampleCount * 2246822519u);
-                                HashRNG rng(seed);
-                                Ray ray = scene->camera.generateRay(
-                                    px, py, W, H, rng.nextFloat(), rng.nextFloat());
-                                accum[py * W + px] += useAO
-                                        ? renderDirect(ray, *scene, scene->materials, pixelConeAngle, useSun, useSky, useBackFill, useRim, sunDir)
-                                        : tracePath(ray, rng, scene->materials, *scene, brdfMode, useNEE, pixelConeAngle);
-                            } else {
-                                uint64_t seed =
-                                    (uint64_t)((py * W + px) * 1099511628211ull
-                                    ^ (uint64_t)sampleCount * 6364136223846793005ull);
-                                RNG rng(seed);
-                                Ray ray = scene->camera.generateRay(
-                                    px, py, W, H, rng.nextFloat(), rng.nextFloat());
-                                accum[py * W + px] += useAO
-                                        ? renderDirect(ray, *scene, scene->materials, pixelConeAngle, useSun, useSky, useBackFill, useRim, sunDir)
-                                        : tracePath(ray, rng, scene->materials, *scene, brdfMode, useNEE, pixelConeAngle);
-                            }
-                        }
-                    }
-                });
+            // Configure the active integrator for this frame.
+            if (useAO) {
+                directIntegrator.pixelConeAngle = pixelConeAngle;
+                directIntegrator.useSun      = useSun;
+                directIntegrator.useSky      = useSky;
+                directIntegrator.useBackFill = useBackFill;
+                directIntegrator.useRim      = useRim;
+                directIntegrator.sunDir      = sunDir;
+            } else {
+                pathIntegrator.brdfMode       = brdfMode;
+                pathIntegrator.useNEE         = useNEE;
+                pathIntegrator.pixelConeAngle = pixelConeAngle;
             }
-            for (auto& t : threads) t.join();
+
+            // Build a sampler for this pass and dispatch.
+            std::unique_ptr<Sampler> sampler;
+            if (useHashRng)
+                sampler = std::make_unique<HashSampler>(W, (uint32_t)passCount);
+            else
+                sampler = std::make_unique<IndependentSampler>(
+                    (uint64_t)passCount * 6364136223846793005ull);
+
+            SamplerIntegrator& integrator = useAO
+                ? static_cast<SamplerIntegrator&>(directIntegrator)
+                : static_cast<SamplerIntegrator&>(pathIntegrator);
+
+            integrator.render(film, scene->camera, *scene,
+                              *sampler, (uint64_t)passCount, nThreads);
         }
 
         // ---- Tone map + upload to GL texture --------------------------
-        float invN = 1.0f / (float)sampleCount;
-        for (int i = 0; i < W * H; i++)
-            pixels[i] = tonemapPixel(accum[i], invN);
-
-        glBindTexture(GL_TEXTURE_2D, tex);
-        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, W, H, GL_BGRA, GL_UNSIGNED_BYTE, pixels.data());
-        glBindTexture(GL_TEXTURE_2D, 0);
+        {
+            auto bgra = film.toBGRA32();
+            glBindTexture(GL_TEXTURE_2D, tex);
+            glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, W, H,
+                            GL_BGRA, GL_UNSIGNED_BYTE, bgra.data());
+            glBindTexture(GL_TEXTURE_2D, 0);
+        }
 
         // ---- ImGui frame ---------------------------------------------
         ImGui_ImplOpenGL3_NewFrame();
@@ -340,7 +315,7 @@ int main(int, char**) {
                      ImGuiWindowFlags_NoMove);
 
         ImGui::Text("Scene: %s", scene->name.c_str());
-        ImGui::Text("SPP:   %d", sampleCount);
+        ImGui::Text("SPP:   %d", passCount);
         ImGui::Text("FPS:   %.1f", io.Framerate);
         ImGui::Text("Threads: %d", nThreads);
         ImGui::Text("Tris:    %zu   Spheres: %zu",
@@ -360,7 +335,7 @@ int main(int, char**) {
                     auto ns = loadScene(currentSceneIdx);
                     if (ns) {
                         scene = std::move(ns);
-                        appState.scene = scene.get();
+                        appState.scene     = scene.get();
                         resetAccum();
                     } else {
                         currentSceneIdx = prev;
