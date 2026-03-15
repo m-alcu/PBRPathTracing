@@ -23,7 +23,6 @@ Ray Tracing (broad technique)\
 - **Reinhard tone mapping** + gamma-2 correction
 - **Progressive accumulation**: each frame adds one sample per pixel; the image refines indefinitely
 - **Multi-threaded rendering**: one `std::thread` per CPU core, row-striped (no contention)
-- **SDL3 streaming texture**: the float accumulation buffer is tone-mapped and uploaded to the GPU every frame via `SDL_UpdateTexture`
 - **YAML scene files**: define camera, materials (`albedo`, `emission`, `metallic`, `roughness`, `ior`, `transmission`), OBJ meshes and spheres
 - **Interactive orbit camera**: left-drag to orbit, scroll to zoom — resets accumulation on change
 - **Dear ImGui panel**: live SPP counter, FPS, thread count, scene switcher, BRDF mode selector
@@ -54,6 +53,17 @@ ref: https://en.wikipedia.org/wiki/Rendering_equation
 | `Li(x, ωi)` | Incoming radiance from direction `ωi` |
 | `ωi · n` | Cosine of the angle between incident direction and surface normal |
 | `Ω` | Hemisphere above the surface point |
+
+`fr(x, ωi, ωo)` could be of several types:
+
+| `fr(x, ωi, ωo)` | BSDF |
+|--------|---------|
+| diffuse | <img src="resources/diffuse.png" width="200"> |
+| glossy | <img src="resources/glossy.png" width="200"> |
+| specular | <img src="resources/specular.png" width="200"> |
+| retro-reflective | <img src="resources/retro-reflective.png" width="200"> |
+
+
 
 The integral has no closed form for general scenes, so we solve it with Monte Carlo estimation.
 
@@ -901,6 +911,16 @@ scene:
 
 ## Build
 
+Debian/Ubuntu, install these packages:
+
+```bash
+sudo apt update
+sudo apt install build-essential cmake \
+	libglew-dev libglfw3-dev libglm-dev libgl1-mesa-dev
+```
+
+and then run the normal CMake steps:
+
 ```bash
 # Configure
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
@@ -912,13 +932,23 @@ cmake --build build --parallel $(nproc)
 ./build/bin/PBRPathTracing
 ```
 
-### Dependencies (fetched automatically by CMake)
+Windows:
 
-| Library | Version | Purpose |
-|---------|---------|---------|
-| SDL3 | 3.4.0 | Window, input, streaming texture |
-| yaml-cpp | 0.9.0 | Scene file parsing |
-| Google Test | 1.14.0 | Unit tests (optional, `BUILD_TESTS=OFF` to skip) |
+1. Install dependencies with Vcpkg
+	- `vcpkg install`
+2. Get the vcpkg cmake toolchain file path
+	- `vcpkg integrate install`
+	- This will output something like : `CMake projects should use: "-DCMAKE_TOOLCHAIN_FILE=/path/to/vcpkg/scripts/buildsystems/vcpkg.cmake"`
+3. Create a build directory
+	- `mkdir build`
+4. Configure project with CMake
+	-  `cmake -B build -S . -DCMAKE_TOOLCHAIN_FILE=/path/to/vcpkg/scripts/buildsystems/vcpkg.cmake`
+	- Use the vcpkg cmake toolchain path from above
+5. Build the project
+	- `cmake --build build`
+
+### Dependencies
+
 
 Vendored (in `src/vendor/`): Dear ImGui, stb_image, tinyobjloader.
 
